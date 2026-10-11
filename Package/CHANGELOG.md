@@ -1,3 +1,7 @@
+# 1.0.6
+
+- Logging in without a hip lantern no longer says Lantern off.
+
 # 1.0.5
 
 - The Charm cell keeps the hip lantern model. Turning the light on plays the cue again.

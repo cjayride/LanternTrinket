@@ -15,7 +15,7 @@ namespace Cjayride.LanternTrinket
     {
         public const string PluginGuid = "cjayride.LanternTrinket";
         public const string PluginName = "Lantern Trinket";
-        public const string PluginVersion = "1.0.5";
+        public const string PluginVersion = "1.0.6";
 
         public static ConfigEntry<bool> EnchantsOnlyWhileLit;
         public static ConfigEntry<string> SeneaLSlot;
@@ -89,11 +89,19 @@ namespace Cjayride.LanternTrinket
             Player player = Player.m_localPlayer;
             if (player == null)
             {
+                _haveLight = false;
                 return;
             }
 
             ItemDrop.ItemData lantern = Lit.EquippedLantern(player);
-            bool on = lantern != null && Lit.LightOn(lantern);
+            if (lantern == null)
+            {
+                _haveLight = false;
+                _sawLight = false;
+                return;
+            }
+
+            bool on = Lit.LightOn(lantern);
             if (!_haveLight)
             {
                 _haveLight = true;
@@ -113,7 +121,7 @@ namespace Cjayride.LanternTrinket
 
         internal static void StartDark(Player player, ItemDrop.ItemData item)
         {
-            if (item == null)
+            if (!Lit.IsLantern(item))
             {
                 return;
             }
