@@ -15,7 +15,7 @@ namespace Cjayride.LanternTrinket
     {
         public const string PluginGuid = "cjayride.LanternTrinket";
         public const string PluginName = "Lantern Trinket";
-        public const string PluginVersion = "1.0.7";
+        public const string PluginVersion = "1.0.8";
 
         public static ConfigEntry<bool> EnchantsOnlyWhileLit;
         public static ConfigEntry<string> SeneaLSlot;
@@ -506,15 +506,20 @@ namespace Cjayride.LanternTrinket
     internal static class Keys
     {
         const string LightHint = "required for EpicLoot magic";
+        static FieldInfo _lightField;
+        static FieldInfo _heatField;
+        static PropertyInfo _lightValue;
+        static PropertyInfo _heatValue;
+        static bool _lookedUp;
 
         public static string Light()
         {
-            return Read("toggleLanternShortcut", "H");
+            return Read(ref _lightField, ref _lightValue, "H");
         }
 
         public static string Heat()
         {
-            return Read("toggleLanternHeatShortcut", "H + LeftAlt");
+            return Read(ref _heatField, ref _heatValue, "H + LeftAlt");
         }
 
         public static string EquipHint()
@@ -532,15 +537,36 @@ namespace Cjayride.LanternTrinket
             text += "\n\n<color=#ffc078>Press " + Light() + " to turn on light (" + LightHint + ")</color>\n<color=#ff9e7a>Press " + Heat() + " to turn on heat</color>";
         }
 
-        static string Read(string fieldName, string fallback)
+        static string Read(ref FieldInfo field, ref PropertyInfo value, string fallback)
         {
-            Type type = AccessTools.TypeByName("HipLantern.HipLantern");
-            FieldInfo field = type == null ? null : AccessTools.Field(type, fieldName);
+            Lookup();
             object entry = field == null ? null : field.GetValue(null);
-            PropertyInfo value = entry == null ? null : entry.GetType().GetProperty("Value");
-            object shortcut = value == null ? null : value.GetValue(entry, null);
+            if (value == null && entry != null)
+            {
+                value = entry.GetType().GetProperty("Value");
+            }
+
+            object shortcut = value == null || entry == null ? null : value.GetValue(entry, null);
             string text = shortcut == null ? null : shortcut.ToString();
             return string.IsNullOrEmpty(text) ? fallback : text;
+        }
+
+        static void Lookup()
+        {
+            if (_lookedUp)
+            {
+                return;
+            }
+
+            _lookedUp = true;
+            Type type = AccessTools.TypeByName("HipLantern.HipLantern");
+            if (type == null)
+            {
+                return;
+            }
+
+            _lightField = AccessTools.Field(type, "toggleLanternShortcut");
+            _heatField = AccessTools.Field(type, "toggleLanternHeatShortcut");
         }
     }
 

@@ -7,8 +7,10 @@
     <Nullable>disable</Nullable>
     <AssemblyName>Cjayride.LanternTrinket</AssemblyName>
     <RootNamespace>Cjayride.LanternTrinket</RootNamespace>
-    <Version>1.0.7</Version>
+    <Version>1.0.8</Version>
     <AppendTargetFrameworkToOutputPath>true</AppendTargetFrameworkToOutputPath>
+    <BepInExCore Condition="Exists('$(VALHEIM_INSTALL)\BepInEx\core\BepInEx.dll')">$(VALHEIM_INSTALL)\BepInEx\core</BepInExCore>
+    <BepInExCore Condition="'$(BepInExCore)' == ''">D:\AI-Agent-Projects\Mods\libs</BepInExCore>
   </PropertyGroup>
 
   <ItemGroup>
@@ -17,11 +19,11 @@
 
   <ItemGroup>
     <Reference Include="BepInEx">
-      <HintPath>$(VALHEIM_INSTALL)\BepInEx\core\BepInEx.dll</HintPath>
+      <HintPath>$(BepInExCore)\BepInEx.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="0Harmony">
-      <HintPath>$(VALHEIM_INSTALL)\BepInEx\core\0Harmony.dll</HintPath>
+      <HintPath>$(BepInExCore)\0Harmony.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="assembly_valheim">
