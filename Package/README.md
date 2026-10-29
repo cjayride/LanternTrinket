@@ -1,11 +1,53 @@
-# Lantern Trinket
+# 🏮 Lantern Trinket
 
-EpicLoot effects on the hip lantern count only while its light is on.
+**Bring Epic Loot enchantments to your hip lantern — only while its light is on.**
 
-`SeneaL slot` chooses the equipment cell. Charm is the wisplight and wishbone cell. The lantern swaps with whatever is already in that cell, and the hip model stays on the character. Equipping it leaves the light off until H. Turning the light off keeps the lantern equipped and drops its EpicLoot effects until the light is on again. A side message says Lantern on or Lantern off, and turning the light on plays a quiet cue instead of the fire burst.
+Lantern Trinket integrates **Hip Lantern**, **SeneaL UI**, and **EpicLoot** so your equipped hip lantern can provide its magical effects without requiring the light to remain on all the time.
 
-`EnchantsOnlyWhileLit` defaults to on.
+## ✨ Features
 
-## Install
+### 🔮 EpicLoot Enchantments
 
-Copy `Cjayride.LanternTrinket.dll` into `BepInEx/plugins` on the client and the server. Hip Lantern, SeneaL UI, and EpicLoot need to be installed. `Make Lantern enchantable by EpicLoot` should be true. Leave Hip Lantern's utility slot off so the hip model stays attached.
+- EpicLoot effects only activate while the lantern's light is on.
+- Turning the light off disables the lantern's EpicLoot effects without unequipping it.
+- The `EnchantsOnlyWhileLit` configuration option controls this behavior and defaults to `true`.
+
+### 🎒 Equipment Slot Integration
+
+- **SeneaL slot** selects which equipment cell the lantern uses.
+- **Charm** is the wisplight and wishbone equipment cell.
+- Other available cells include Belt, Trinket, Head, Cape, Chest, and Legs.
+- Equipping the lantern swaps it with the item already occupying the selected cell.
+- The hip lantern model remains attached to your character.
+
+### 💡 Light Controls & Feedback
+
+- Equipping the lantern leaves its light off until you press **H**.
+- A side message displays **Lantern on** or **Lantern off** when the light state changes.
+- Turning the light on plays a quiet audio cue instead of the default fire burst.
+- The lantern tooltip and equip message display the current Hip Lantern controls for light and heat.
+- **Light must be on for EpicLoot magic to work.**
+
+**Default controls:**
+
+| Action | Key |
+|---|---|
+| Toggle light | `H` |
+| Toggle heat | `LeftAlt + H` |
+
+The heat shortcut can be changed in Hip Lantern's configuration.
+
+## 📦 Requirements
+
+- **BepInEx**
+- **Hip Lantern**
+- **SeneaL UI**
+- **EpicLoot**
+
+## 📥 Installation
+
+1. Install all required dependencies.
+2. Copy `Cjayride.LanternTrinket.dll` into your `BepInEx/plugins` folder on **both the client and server**.
+3. In EpicLoot's configuration, enable **Make Lantern enchantable by EpicLoot**.
+4. Leave Hip Lantern's utility slot disabled so the hip lantern model stays attached to your character.
+5. Launch the game and configure the

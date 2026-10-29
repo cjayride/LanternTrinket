@@ -15,7 +15,7 @@ namespace Cjayride.LanternTrinket
     {
         public const string PluginGuid = "cjayride.LanternTrinket";
         public const string PluginName = "Lantern Trinket";
-        public const string PluginVersion = "1.0.6";
+        public const string PluginVersion = "1.0.7";
 
         public static ConfigEntry<bool> EnchantsOnlyWhileLit;
         public static ConfigEntry<string> SeneaLSlot;
@@ -116,7 +116,7 @@ namespace Cjayride.LanternTrinket
 
             _sawLight = on;
             Lit.ResetMagicTotals(player);
-            player.Message(MessageHud.MessageType.TopLeft, on ? "Lantern on" : "Lantern off");
+            player.Message(MessageHud.MessageType.TopLeft, on ? "Lantern on (EpicLoot active)" : "Lantern off — press " + Keys.Light() + " for light");
         }
 
         internal static void StartDark(Player player, ItemDrop.ItemData item)
@@ -153,7 +153,7 @@ namespace Cjayride.LanternTrinket
             _sawLight = false;
             if (player != null)
             {
-                player.Message(MessageHud.MessageType.TopLeft, "Lantern off");
+                player.Message(MessageHud.MessageType.TopLeft, Keys.EquipHint());
             }
         }
 
@@ -500,6 +500,63 @@ namespace Cjayride.LanternTrinket
         public static void ResetMagicTotals(Player player)
         {
             Plugin.ResetMagicTotals(player);
+        }
+    }
+
+    internal static class Keys
+    {
+        const string LightHint = "required for EpicLoot magic";
+
+        public static string Light()
+        {
+            return Read("toggleLanternShortcut", "H");
+        }
+
+        public static string Heat()
+        {
+            return Read("toggleLanternHeatShortcut", "H + LeftAlt");
+        }
+
+        public static string EquipHint()
+        {
+            return "Lantern off — " + Light() + ": light (" + LightHint + "), " + Heat() + ": heat";
+        }
+
+        public static void AppendTooltip(ItemDrop.ItemData item, ref string text)
+        {
+            if (!Lit.IsLantern(item) || string.IsNullOrEmpty(text) || text.IndexOf(LightHint, StringComparison.Ordinal) >= 0)
+            {
+                return;
+            }
+
+            text += "\n\n<color=#ffc078>Press " + Light() + " to turn on light (" + LightHint + ")</color>\n<color=#ff9e7a>Press " + Heat() + " to turn on heat</color>";
+        }
+
+        static string Read(string fieldName, string fallback)
+        {
+            Type type = AccessTools.TypeByName("HipLantern.HipLantern");
+            FieldInfo field = type == null ? null : AccessTools.Field(type, fieldName);
+            object entry = field == null ? null : field.GetValue(null);
+            PropertyInfo value = entry == null ? null : entry.GetType().GetProperty("Value");
+            object shortcut = value == null ? null : value.GetValue(entry, null);
+            string text = shortcut == null ? null : shortcut.ToString();
+            return string.IsNullOrEmpty(text) ? fallback : text;
+        }
+    }
+
+    [HarmonyPatch]
+    internal static class LanternTooltip
+    {
+        static MethodBase TargetMethod()
+        {
+            return AccessTools.Method(typeof(ItemDrop.ItemData), nameof(ItemDrop.ItemData.GetTooltip),
+                new[] { typeof(ItemDrop.ItemData), typeof(int), typeof(bool), typeof(float), typeof(int), typeof(bool) });
+        }
+
+        [HarmonyPriority(Priority.Last)]
+        static void Postfix(ItemDrop.ItemData item, ref string __result)
+        {
+            Keys.AppendTooltip(item, ref __result);
         }
     }
 

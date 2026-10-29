@@ -1,3 +1,7 @@
+# 1.0.7
+
+- The lantern tooltip and equip message show how to turn on light and heat, including that light is required for EpicLoot magic.
+
 # 1.0.6
 
 - Logging in without a hip lantern no longer says Lantern off.
