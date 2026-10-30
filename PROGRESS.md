@@ -1,17 +1,22 @@
-# Lantern Trinket — usage directions
+# Lantern Trinket — heat tooltip hotkey
 
 ## Goal
-Show how to use the hip lantern on its tooltip/overlay: light key (required for EpicLoot) and heat key.
+Show the Hip Lantern heat/light keys from Hip Lantern's live config, not a hardcoded LeftAlt hint.
 
 ## Status
-Completed.
+Completed. 1.0.9 built.
+
+## Cause
+The tooltip already tried to read `toggleLanternHeatShortcut`, but lookup ran once. If Hip Lantern was not loaded yet, it kept the hardcoded fallback `H + LeftAlt`. KeyboardShortcut.ToString() also printed `H + LeftAlt` instead of `Alt + H` / `Shift + H`.
 
 ## Changes
-- `src/Plugin.cs`: append usage lines to `GetTooltip`; equip/toggle HUD messages include keys; version 1.0.7
-- Package README, CHANGELOG, manifest, csproj version
+- Retry Hip Lantern field lookup until the type exists
+- Read ConfigEntry.Value each hover; fall back to Hip Lantern ConfigFile
+- Format keys as Shift/Alt/Ctrl + main key
+- Version 1.0.9
 
-## Notes
-Hip Lantern heat shortcut in config is `H + LeftAlt`, not Shift+H. Overlay reads the live Hip Lantern config values.
+## Output
+`D:\AI-Agent-Projects\cjaycraft\Cjayride.LanternTrinket\bin\Release\net481\Cjayride.LanternTrinket.dll`
 
 ## Next
-Build and confirm DLL path.
+If heat still is not LeftAlt in-game, change Hip Lantern `Toggle lantern heat shortcut` (server-locked in current packs).

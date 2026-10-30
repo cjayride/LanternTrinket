@@ -7,7 +7,7 @@
     <Nullable>disable</Nullable>
     <AssemblyName>Cjayride.LanternTrinket</AssemblyName>
     <RootNamespace>Cjayride.LanternTrinket</RootNamespace>
-    <Version>1.0.8</Version>
+    <Version>1.0.9</Version>
     <AppendTargetFrameworkToOutputPath>true</AppendTargetFrameworkToOutputPath>
     <BepInExCore Condition="Exists('$(VALHEIM_INSTALL)\BepInEx\core\BepInEx.dll')">$(VALHEIM_INSTALL)\BepInEx\core</BepInExCore>
     <BepInExCore Condition="'$(BepInExCore)' == ''">D:\AI-Agent-Projects\Mods\libs</BepInExCore>

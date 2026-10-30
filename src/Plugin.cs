@@ -15,7 +15,7 @@ namespace Cjayride.LanternTrinket
     {
         public const string PluginGuid = "cjayride.LanternTrinket";
         public const string PluginName = "Lantern Trinket";
-        public const string PluginVersion = "1.0.8";
+        public const string PluginVersion = "1.0.9";
 
         public static ConfigEntry<bool> EnchantsOnlyWhileLit;
         public static ConfigEntry<string> SeneaLSlot;
@@ -506,20 +506,20 @@ namespace Cjayride.LanternTrinket
     internal static class Keys
     {
         const string LightHint = "required for EpicLoot magic";
+        static Type _hipType;
         static FieldInfo _lightField;
         static FieldInfo _heatField;
         static PropertyInfo _lightValue;
         static PropertyInfo _heatValue;
-        static bool _lookedUp;
 
         public static string Light()
         {
-            return Read(ref _lightField, ref _lightValue, "H");
+            return Read(ref _lightField, ref _lightValue, "Toggle lantern shortcut", "H");
         }
 
         public static string Heat()
         {
-            return Read(ref _heatField, ref _heatValue, "H + LeftAlt");
+            return Read(ref _heatField, ref _heatValue, "Toggle lantern heat shortcut", "LeftShift + H");
         }
 
         public static string EquipHint()
@@ -537,36 +537,141 @@ namespace Cjayride.LanternTrinket
             text += "\n\n<color=#ffc078>Press " + Light() + " to turn on light (" + LightHint + ")</color>\n<color=#ff9e7a>Press " + Heat() + " to turn on heat</color>";
         }
 
-        static string Read(ref FieldInfo field, ref PropertyInfo value, string fallback)
+        static string Read(ref FieldInfo field, ref PropertyInfo value, string configName, string fallback)
         {
             Lookup();
+            object shortcut = FromEntry(ref field, ref value);
+            if (shortcut == null)
+            {
+                shortcut = FromConfigFile(configName);
+            }
+
+            string text = Format(shortcut);
+            return string.IsNullOrEmpty(text) ? fallback : text;
+        }
+
+        static object FromEntry(ref FieldInfo field, ref PropertyInfo value)
+        {
             object entry = field == null ? null : field.GetValue(null);
-            if (value == null && entry != null)
+            if (entry == null)
+            {
+                return null;
+            }
+
+            if (value == null)
             {
                 value = entry.GetType().GetProperty("Value");
             }
 
-            object shortcut = value == null || entry == null ? null : value.GetValue(entry, null);
-            string text = shortcut == null ? null : shortcut.ToString();
-            return string.IsNullOrEmpty(text) ? fallback : text;
+            return value == null ? null : value.GetValue(entry, null);
+        }
+
+        static object FromConfigFile(string configName)
+        {
+            if (_hipType == null)
+            {
+                return null;
+            }
+
+            FieldInfo instanceField = AccessTools.Field(_hipType, "instance");
+            object instance = instanceField == null ? null : instanceField.GetValue(null);
+            if (instance == null)
+            {
+                return null;
+            }
+
+            ConfigFile config = null;
+            try
+            {
+                config = (instance as BaseUnityPlugin)?.Config;
+            }
+            catch (Exception)
+            {
+            }
+
+            if (config == null)
+            {
+                return null;
+            }
+
+            foreach (KeyValuePair<ConfigDefinition, ConfigEntryBase> pair in config)
+            {
+                if (pair.Key != null && string.Equals(pair.Key.Key, configName, StringComparison.Ordinal)
+                    && pair.Value != null)
+                {
+                    return pair.Value.BoxedValue;
+                }
+            }
+
+            return null;
+        }
+
+        static string Format(object shortcut)
+        {
+            if (shortcut == null)
+            {
+                return null;
+            }
+
+            if (shortcut is KeyboardShortcut keys)
+            {
+                if (keys.MainKey == KeyCode.None)
+                {
+                    return null;
+                }
+
+                List<string> parts = new List<string>();
+                foreach (KeyCode modifier in keys.Modifiers)
+                {
+                    string name = KeyName(modifier);
+                    if (!string.IsNullOrEmpty(name))
+                    {
+                        parts.Add(name);
+                    }
+                }
+
+                parts.Add(KeyName(keys.MainKey));
+                return string.Join(" + ", parts.ToArray());
+            }
+
+            string text = shortcut.ToString();
+            return string.IsNullOrEmpty(text) || text == "None" ? null : text.Replace("LeftShift", "Shift").Replace("RightShift", "Shift").Replace("LeftAlt", "Alt").Replace("RightAlt", "Alt").Replace("LeftControl", "Ctrl").Replace("RightControl", "Ctrl");
+        }
+
+        static string KeyName(KeyCode key)
+        {
+            switch (key)
+            {
+                case KeyCode.LeftShift:
+                case KeyCode.RightShift:
+                    return "Shift";
+                case KeyCode.LeftAlt:
+                case KeyCode.RightAlt:
+                case KeyCode.AltGr:
+                    return "Alt";
+                case KeyCode.LeftControl:
+                case KeyCode.RightControl:
+                    return "Ctrl";
+                default:
+                    return key.ToString();
+            }
         }
 
         static void Lookup()
         {
-            if (_lookedUp)
+            if (_lightField != null && _heatField != null)
             {
                 return;
             }
 
-            _lookedUp = true;
-            Type type = AccessTools.TypeByName("HipLantern.HipLantern");
-            if (type == null)
+            _hipType = AccessTools.TypeByName("HipLantern.HipLantern");
+            if (_hipType == null)
             {
                 return;
             }
 
-            _lightField = AccessTools.Field(type, "toggleLanternShortcut");
-            _heatField = AccessTools.Field(type, "toggleLanternHeatShortcut");
+            _lightField = AccessTools.Field(_hipType, "toggleLanternShortcut");
+            _heatField = AccessTools.Field(_hipType, "toggleLanternHeatShortcut");
         }
     }
 

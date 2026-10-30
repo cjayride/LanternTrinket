@@ -1,3 +1,7 @@
+# 1.0.9
+
+- Light and heat tooltip keys come from Hip Lantern's live config, shown as Shift/Alt/Ctrl + key.
+
 # 1.0.8
 
 - Hovering the hip lantern no longer stalls for a second while the tooltip loads.
