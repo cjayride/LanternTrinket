@@ -15,7 +15,7 @@ namespace Cjayride.LanternTrinket
     {
         public const string PluginGuid = "cjayride.LanternTrinket";
         public const string PluginName = "Lantern Trinket";
-        public const string PluginVersion = "1.0.9";
+        public const string PluginVersion = "1.1.1";
 
         public static ConfigEntry<bool> EnchantsOnlyWhileLit;
         public static ConfigEntry<string> SeneaLSlot;
@@ -23,9 +23,15 @@ namespace Cjayride.LanternTrinket
         static MethodInfo _resetCache;
         static MethodInfo _setLight;
         static MethodInfo _setState;
+        static readonly object[] _one = new object[1];
+        static readonly object[] _two = new object[2];
         static bool _wispPatched;
-        static bool _sawLight;
         static bool _haveLight;
+        static bool _sawLight;
+        static bool _setupFinished;
+        static int _setupTicks;
+        static float _nextSetup;
+        internal static bool HideLanternMagic;
 
         private void Awake()
         {
@@ -37,19 +43,45 @@ namespace Cjayride.LanternTrinket
                     new AcceptableValueList<string>("Charm", "Belt", "Trinket", "Head", "Cape", "Chest", "Legs")));
             _harmony = new Harmony(PluginGuid);
             _harmony.PatchAll();
+            TryPatchMods();
             Logger.LogInfo("Hip lantern slot comes from the SeneaL slot config. Enchants count only while the light is on.");
         }
 
         private void LateUpdate()
         {
+            if (_setupFinished)
+            {
+                return;
+            }
+
+            if (_wispPatched && WispSlot.Ready)
+            {
+                _setupFinished = true;
+                return;
+            }
+
+            if (Time.unscaledTime < _nextSetup)
+            {
+                return;
+            }
+
+            _nextSetup = Time.unscaledTime + 0.5f;
+            _setupTicks++;
+            Mods.Retry();
+            TryPatchMods();
             WispSlot.Apply();
             EnsureWispPatch();
-            Player player = Player.m_localPlayer;
-            ItemDrop.ItemData lantern = player == null ? null : Lit.EquippedLantern(player);
-            if (lantern != null)
+            if (_setupTicks >= 20)
             {
-                WispSlot.Move(player, lantern);
+                _setupFinished = true;
             }
+        }
+
+        static void TryPatchMods()
+        {
+            LightToggled.Apply(_harmony);
+            QuietEnchantCue.Apply(_harmony);
+            HideDarkLanternMagic.Apply(_harmony);
         }
 
         void EnsureWispPatch()
@@ -59,8 +91,8 @@ namespace Cjayride.LanternTrinket
                 return;
             }
 
-            MethodInfo isCharm = AccessTools.Method("SeneaLUI.Inv.Slots:IsCharm");
-            MethodInfo slotFor = AccessTools.Method("SeneaLUI.Inv.Slots:SlotFor");
+            MethodInfo isCharm = Mods.Method("SeneaLUI.Inv.Slots", "IsCharm");
+            MethodInfo slotFor = Mods.Method("SeneaLUI.Inv.Slots", "SlotFor");
             if (isCharm == null || slotFor == null)
             {
                 return;
@@ -79,29 +111,19 @@ namespace Cjayride.LanternTrinket
             Logger.LogInfo("Hip lantern uses the SeneaL " + (SeneaLSlot != null ? SeneaLSlot.Value : "Charm") + " slot.");
         }
 
-        private void Update()
+        internal static void OnLightChanged(Player player, ItemDrop.ItemData item, bool on)
         {
+            if (player == null || !Lit.IsLantern(item))
+            {
+                return;
+            }
+
+            HideLanternMagic = EnchantsOnlyWhileLit != null && EnchantsOnlyWhileLit.Value && !on;
             if (EnchantsOnlyWhileLit == null || !EnchantsOnlyWhileLit.Value)
             {
                 return;
             }
 
-            Player player = Player.m_localPlayer;
-            if (player == null)
-            {
-                _haveLight = false;
-                return;
-            }
-
-            ItemDrop.ItemData lantern = Lit.EquippedLantern(player);
-            if (lantern == null)
-            {
-                _haveLight = false;
-                _sawLight = false;
-                return;
-            }
-
-            bool on = Lit.LightOn(lantern);
             if (!_haveLight)
             {
                 _haveLight = true;
@@ -115,6 +137,7 @@ namespace Cjayride.LanternTrinket
             }
 
             _sawLight = on;
+            HideLanternMagic = !on;
             Lit.ResetMagicTotals(player);
             player.Message(MessageHud.MessageType.TopLeft, on ? "Lantern on (EpicLoot active)" : "Lantern off — press " + Keys.Light() + " for light");
         }
@@ -128,21 +151,25 @@ namespace Cjayride.LanternTrinket
 
             if (_setLight == null)
             {
-                _setLight = AccessTools.Method("HipLantern.LanternItem:SetLightEnabled");
+                _setLight = Mods.Method("HipLantern.LanternItem", "SetLightEnabled");
             }
 
             if (_setState == null)
             {
-                _setState = AccessTools.Method("HipLantern.VisEquipmentExtension:SetLanternState");
+                _setState = Mods.Method("HipLantern.VisEquipmentExtension", "SetLanternState");
             }
 
             try
             {
-                _setLight?.Invoke(null, new object[] { item, false });
+                _two[0] = item;
+                _two[1] = false;
+                _setLight?.Invoke(null, _two);
                 VisEquipment vis = player != null ? player.GetComponent<VisEquipment>() : null;
                 if (vis != null)
                 {
-                    _setState?.Invoke(null, new object[] { vis, item });
+                    _two[0] = vis;
+                    _two[1] = item;
+                    _setState?.Invoke(null, _two);
                 }
             }
             catch (Exception)
@@ -151,6 +178,7 @@ namespace Cjayride.LanternTrinket
 
             _haveLight = true;
             _sawLight = false;
+            HideLanternMagic = EnchantsOnlyWhileLit == null || EnchantsOnlyWhileLit.Value;
             if (player != null)
             {
                 player.Message(MessageHud.MessageType.TopLeft, Keys.EquipHint());
@@ -161,13 +189,14 @@ namespace Cjayride.LanternTrinket
         {
             if (_resetCache == null)
             {
-                Type cache = AccessTools.TypeByName("EpicLoot.EquipmentEffectCache");
+                Type cache = Mods.Type("EpicLoot.EquipmentEffectCache");
                 _resetCache = cache == null ? null : AccessTools.Method(cache, "Reset");
             }
 
             try
             {
-                _resetCache?.Invoke(null, new object[] { player });
+                _one[0] = player;
+                _resetCache?.Invoke(null, _one);
             }
             catch (Exception)
             {
@@ -175,14 +204,130 @@ namespace Cjayride.LanternTrinket
         }
     }
 
+    internal static class Mods
+    {
+        static readonly Dictionary<string, Type> Found = new Dictionary<string, Type>();
+        static readonly HashSet<string> Missing = new HashSet<string>();
+
+        public static void Retry()
+        {
+            Missing.Clear();
+        }
+
+        public static Type Type(string fullName)
+        {
+            if (Found.TryGetValue(fullName, out Type hit))
+            {
+                return hit;
+            }
+
+            if (Missing.Contains(fullName))
+            {
+                return null;
+            }
+
+            Type type = Find(fullName);
+            if (type != null)
+            {
+                Found[fullName] = type;
+                return type;
+            }
+
+            Missing.Add(fullName);
+            return null;
+        }
+
+        public static MethodInfo Method(string typeName, string methodName)
+        {
+            Type type = Type(typeName);
+            return type == null ? null : AccessTools.Method(type, methodName);
+        }
+
+        static Type Find(string fullName)
+        {
+            Assembly[] assemblies = AppDomain.CurrentDomain.GetAssemblies();
+            for (int i = 0; i < assemblies.Length; i++)
+            {
+                Type type = null;
+                try
+                {
+                    type = assemblies[i].GetType(fullName, false);
+                }
+                catch (Exception)
+                {
+                }
+
+                if (type != null)
+                {
+                    return type;
+                }
+            }
+
+            int dot = fullName.LastIndexOf('.');
+            string simple = dot >= 0 ? fullName.Substring(dot + 1) : fullName;
+            string ns = dot >= 0 ? fullName.Substring(0, dot) : null;
+            for (int i = 0; i < assemblies.Length; i++)
+            {
+                string name = assemblies[i].GetName().Name;
+                if (name == null
+                    || (name.IndexOf("HipLantern", StringComparison.OrdinalIgnoreCase) < 0
+                        && name.IndexOf("SeneaL", StringComparison.OrdinalIgnoreCase) < 0
+                        && name.IndexOf("EpicLoot", StringComparison.OrdinalIgnoreCase) < 0))
+                {
+                    continue;
+                }
+
+                Type[] types;
+                try
+                {
+                    types = assemblies[i].GetTypes();
+                }
+                catch (ReflectionTypeLoadException ex)
+                {
+                    types = ex.Types;
+                }
+                catch (Exception)
+                {
+                    continue;
+                }
+
+                if (types == null)
+                {
+                    continue;
+                }
+
+                for (int t = 0; t < types.Length; t++)
+                {
+                    Type type = types[t];
+                    if (type == null)
+                    {
+                        continue;
+                    }
+
+                    if (type.FullName == fullName || (type.Name == simple && type.Namespace == ns))
+                    {
+                        return type;
+                    }
+                }
+            }
+
+            return null;
+        }
+    }
+
     internal static class WispSlot
     {
         static FieldInfo _useUtility;
-        static FieldInfo _slotType;
         static MethodInfo _apply;
         static MethodInfo _slotCell;
-        static bool _lookedUp;
-        static bool _synced;
+        static FieldInfo _cellX;
+        static FieldInfo _cellY;
+        static bool _ready;
+        static int _slotX = int.MinValue;
+        static int _slotY = int.MinValue;
+        static int _cachedSlotId = int.MinValue;
+
+        public static bool Ready => _ready && _slotCell != null;
 
         public static bool CharmChosen()
         {
@@ -191,14 +336,19 @@ namespace Cjayride.LanternTrinket
 
         public static void Apply()
         {
+            if (_ready)
+            {
+                return;
+            }
+
             Lookup();
-            if (_synced || _useUtility == null)
+            if (_useUtility == null)
             {
                 return;
             }
 
             SetConfig(_useUtility, false);
-            _synced = true;
+            _ready = true;
             try
             {
                 _apply?.Invoke(null, null);
@@ -234,18 +384,45 @@ namespace Cjayride.LanternTrinket
                 return;
             }
 
-            object cell = null;
-            try
+            int x = _slotX;
+            int y = _slotY;
+            int slot = SlotId();
+            if (x == int.MinValue || slot != _cachedSlotId)
             {
-                cell = _slotCell.Invoke(null, new object[] { inventory, SlotId() });
-            }
-            catch (Exception)
-            {
-                return;
+                object cell;
+                try
+                {
+                    cell = InvokeSlotCell(inventory, slot);
+                }
+                catch (Exception)
+                {
+                    return;
+                }
+
+                if (cell == null)
+                {
+                    return;
+                }
+
+                if (_cellX == null)
+                {
+                    Type type = cell.GetType();
+                    _cellX = type.GetField("x");
+                    _cellY = type.GetField("y");
+                }
+
+                if (_cellX == null || _cellY == null)
+                {
+                    return;
+                }
+
+                x = (int)_cellX.GetValue(cell);
+                y = (int)_cellY.GetValue(cell);
+                _slotX = x;
+                _slotY = y;
+                _cachedSlotId = slot;
             }
 
-            int x = (int)cell.GetType().GetField("x").GetValue(cell);
-            int y = (int)cell.GetType().GetField("y").GetValue(cell);
             if (x < 0 || (item.m_gridPos.x == x && item.m_gridPos.y == y))
             {
                 return;
@@ -264,6 +441,12 @@ namespace Cjayride.LanternTrinket
 
             item.m_gridPos = new Vector2i(x, y);
             inventory.Changed();
+        }
+
+        static object InvokeSlotCell(Inventory inventory, int slot)
+        {
+            object[] args = { inventory, slot };
+            return _slotCell.Invoke(null, args);
         }
 
         static string ChosenName()
@@ -299,7 +482,8 @@ namespace Cjayride.LanternTrinket
                 return equipped;
             }
 
-            List<ItemDrop.ItemData> items = player.GetInventory()?.GetAllItems();
+            Inventory inventory = player.GetInventory();
+            List<ItemDrop.ItemData> items = inventory == null ? null : inventory.m_inventory;
             if (items == null)
             {
                 return null;
@@ -342,19 +526,28 @@ namespace Cjayride.LanternTrinket
 
         static void Lookup()
         {
-            if (_lookedUp)
+            if (_slotCell != null && _useUtility != null)
             {
                 return;
             }
 
-            _lookedUp = true;
-            Type plugin = AccessTools.TypeByName("HipLantern.HipLantern");
-            Type lantern = AccessTools.TypeByName("HipLantern.LanternItem");
-            Type slots = AccessTools.TypeByName("SeneaLUI.Inv.Slots");
-            _useUtility = plugin == null ? null : AccessTools.Field(plugin, "itemSlotUtility");
-            _slotType = plugin == null ? null : AccessTools.Field(plugin, "itemSlotType");
-            _apply = lantern == null ? null : AccessTools.Method(lantern, "PatchLanternItemOnConfigChange");
-            _slotCell = slots == null ? null : AccessTools.Method(slots, "SlotCell");
+            Type plugin = Mods.Type("HipLantern.HipLantern");
+            Type lantern = Mods.Type("HipLantern.LanternItem");
+            Type slots = Mods.Type("SeneaLUI.Inv.Slots");
+            if (_useUtility == null && plugin != null)
+            {
+                _useUtility = AccessTools.Field(plugin, "itemSlotUtility");
+            }
+
+            if (_apply == null && lantern != null)
+            {
+                _apply = AccessTools.Method(lantern, "PatchLanternItemOnConfigChange");
+            }
+
+            if (_slotCell == null && slots != null)
+            {
+                _slotCell = AccessTools.Method(slots, "SlotCell");
+            }
         }
     }
 
@@ -370,6 +563,53 @@ namespace Cjayride.LanternTrinket
 
             WispSlot.Move(player, item);
             Plugin.StartDark(player, item);
+        }
+    }
+
+    [HarmonyPatch(typeof(Humanoid), nameof(Humanoid.UnequipItem))]
+    internal static class UnequipLantern
+    {
+        static void Postfix(Humanoid __instance, ItemDrop.ItemData item)
+        {
+            if (!(__instance is Player) || !Lit.IsLantern(item))
+            {
+                return;
+            }
+
+            Plugin.HideLanternMagic = false;
+        }
+    }
+
+    internal static class LightToggled
+    {
+        static bool _applied;
+
+        public static void Apply(Harmony harmony)
+        {
+            if (_applied || harmony == null)
+            {
+                return;
+            }
+
+            MethodInfo method = Mods.Method("HipLantern.LanternItem", "SetLightEnabled");
+            if (method == null)
+            {
+                return;
+            }
+
+            harmony.Patch(method, postfix: new HarmonyMethod(typeof(LightToggled), nameof(Postfix)));
+            _applied = true;
+        }
+
+        static void Postfix(ItemDrop.ItemData item)
+        {
+            Player player = Player.m_localPlayer;
+            if (player == null || item == null)
+            {
+                return;
+            }
+
+            Plugin.OnLightChanged(player, item, Lit.LightOn(item));
         }
     }
 
@@ -392,7 +632,6 @@ namespace Cjayride.LanternTrinket
         }
     }
 
-    [HarmonyPatch]
     internal static class QuietEnchantCue
     {
         static readonly string[] CuePrefabs =
@@ -402,14 +641,24 @@ namespace Cjayride.LanternTrinket
             "sfx_gui_craft"
         };
 
-        static bool Prepare()
-        {
-            return AccessTools.Method("HipLantern.LanternLightController:EmitSwitchEffect") != null;
-        }
+        static GameObject _cuePrefab;
+        static bool _applied;
 
-        static MethodBase TargetMethod()
+        public static void Apply(Harmony harmony)
         {
-            return AccessTools.Method("HipLantern.LanternLightController:EmitSwitchEffect");
+            if (_applied || harmony == null)
+            {
+                return;
+            }
+
+            MethodInfo method = Mods.Method("HipLantern.LanternLightController", "EmitSwitchEffect");
+            if (method == null)
+            {
+                return;
+            }
+
+            harmony.Patch(method, prefix: new HarmonyMethod(typeof(QuietEnchantCue), nameof(Prefix)));
+            _applied = true;
         }
 
         static bool Prefix(Component __instance, int variant)
@@ -425,33 +674,45 @@ namespace Cjayride.LanternTrinket
 
         static void Play(Vector3 position)
         {
-            if (ZNetScene.instance == null)
+            if (_cuePrefab == null)
+            {
+                if (ZNetScene.instance == null)
+                {
+                    return;
+                }
+
+                for (int i = 0; i < CuePrefabs.Length; i++)
+                {
+                    _cuePrefab = ZNetScene.instance.GetPrefab(CuePrefabs[i]);
+                    if (_cuePrefab != null)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            if (_cuePrefab == null)
             {
                 return;
             }
 
-            for (int i = 0; i < CuePrefabs.Length; i++)
+            GameObject cue = UnityEngine.Object.Instantiate(_cuePrefab, position, Quaternion.identity);
+            ZSFX sfx = cue.GetComponentInChildren<ZSFX>();
+            if (sfx != null)
             {
-                GameObject prefab = ZNetScene.instance.GetPrefab(CuePrefabs[i]);
-                if (prefab == null)
-                {
-                    continue;
-                }
-
-                GameObject cue = UnityEngine.Object.Instantiate(prefab, position, Quaternion.identity);
-                ZSFX sfx = cue.GetComponentInChildren<ZSFX>();
-                if (sfx != null)
-                {
-                    sfx.SetVolumeModifier(0.35f);
-                }
-
-                return;
+                sfx.SetVolumeModifier(0.35f);
             }
         }
     }
 
     internal static class Lit
     {
+        static MethodInfo _isLantern;
+        static MethodInfo _lightOn;
+        static MethodInfo _equipped;
+        static readonly object[] _one = new object[1];
+        static bool _lookedUp;
+
         public static bool IsLantern(ItemDrop.ItemData item)
         {
             if (item?.m_shared == null)
@@ -464,15 +725,56 @@ namespace Cjayride.LanternTrinket
                 return true;
             }
 
-            return item.m_dropPrefab != null && item.m_dropPrefab.name == "HipLantern";
+            if (item.m_dropPrefab != null && item.m_dropPrefab.name == "HipLantern")
+            {
+                return true;
+            }
+
+            Lookup();
+            if (_isLantern == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                _one[0] = item;
+                return (bool)_isLantern.Invoke(null, _one);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
         }
 
         public static bool LightOn(ItemDrop.ItemData item)
         {
-            if (item?.m_customData != null && item.m_customData.TryGetValue("HipLanternState", out string json) && !string.IsNullOrEmpty(json))
+            Lookup();
+            if (_lightOn != null && item != null)
             {
-                return json.IndexOf("\"lightEnabled\":false", StringComparison.Ordinal) < 0
-                    && json.IndexOf("\"lightEnabled\": false", StringComparison.Ordinal) < 0;
+                try
+                {
+                    _one[0] = item;
+                    return (bool)_lightOn.Invoke(null, _one);
+                }
+                catch (Exception)
+                {
+                }
+            }
+
+            if (item?.m_customData != null)
+            {
+                foreach (KeyValuePair<string, string> pair in item.m_customData)
+                {
+                    string json = pair.Value;
+                    if (string.IsNullOrEmpty(json) || json.IndexOf("lightEnabled", StringComparison.Ordinal) < 0)
+                    {
+                        continue;
+                    }
+
+                    return json.IndexOf("\"lightEnabled\":false", StringComparison.Ordinal) < 0
+                        && json.IndexOf("\"lightEnabled\": false", StringComparison.Ordinal) < 0;
+                }
             }
 
             return item == null || item.m_variant != 1;
@@ -480,17 +782,40 @@ namespace Cjayride.LanternTrinket
 
         public static ItemDrop.ItemData EquippedLantern(Player player)
         {
-            List<ItemDrop.ItemData> equipped = player.GetInventory()?.GetEquippedItems();
-            if (equipped == null)
+            if (player == null)
             {
                 return null;
             }
 
-            for (int i = 0; i < equipped.Count; i++)
+            Lookup();
+            if (_equipped != null)
             {
-                if (IsLantern(equipped[i]))
+                try
                 {
-                    return equipped[i];
+                    _one[0] = player;
+                    if (_equipped.Invoke(null, _one) is ItemDrop.ItemData fromHip)
+                    {
+                        return fromHip;
+                    }
+                }
+                catch (Exception)
+                {
+                }
+            }
+
+            Inventory inventory = player.GetInventory();
+            List<ItemDrop.ItemData> items = inventory == null ? null : inventory.m_inventory;
+            if (items == null)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < items.Count; i++)
+            {
+                ItemDrop.ItemData item = items[i];
+                if (item != null && item.m_equipped && IsLantern(item))
+                {
+                    return item;
                 }
             }
 
@@ -500,6 +825,28 @@ namespace Cjayride.LanternTrinket
         public static void ResetMagicTotals(Player player)
         {
             Plugin.ResetMagicTotals(player);
+        }
+
+        static void Lookup()
+        {
+            if (_lookedUp)
+            {
+                return;
+            }
+
+            Type lantern = Mods.Type("HipLantern.LanternItem");
+            if (lantern == null)
+            {
+                return;
+            }
+
+            _lookedUp = true;
+            _isLantern = AccessTools.Method(lantern, "IsLanternItem", new[] { typeof(ItemDrop.ItemData) })
+                ?? AccessTools.Method(lantern, "IsLanternItem");
+            _lightOn = AccessTools.Method(lantern, "IsLightEnabled", new[] { typeof(ItemDrop.ItemData) })
+                ?? AccessTools.Method(lantern, "IsLightEnabled");
+            _equipped = AccessTools.Method(lantern, "GetEquippedLantern", new[] { typeof(Player) })
+                ?? AccessTools.Method(lantern, "GetEquippedLantern");
         }
     }
 
@@ -511,15 +858,22 @@ namespace Cjayride.LanternTrinket
         static FieldInfo _heatField;
         static PropertyInfo _lightValue;
         static PropertyInfo _heatValue;
+        static string _lightText;
+        static string _heatText;
+        static object _lightCached;
+        static object _heatCached;
+        static object _fileLight;
+        static object _fileHeat;
+        static bool _fileLookedUp;
 
         public static string Light()
         {
-            return Read(ref _lightField, ref _lightValue, "Toggle lantern shortcut", "H");
+            return Read(ref _lightField, ref _lightValue, ref _lightCached, ref _lightText, "Toggle lantern shortcut", "H");
         }
 
         public static string Heat()
         {
-            return Read(ref _heatField, ref _heatValue, "Toggle lantern heat shortcut", "LeftShift + H");
+            return Read(ref _heatField, ref _heatValue, ref _heatCached, ref _heatText, "Toggle lantern heat shortcut", "LeftShift + H");
         }
 
         public static string EquipHint()
@@ -537,7 +891,7 @@ namespace Cjayride.LanternTrinket
             text += "\n\n<color=#ffc078>Press " + Light() + " to turn on light (" + LightHint + ")</color>\n<color=#ff9e7a>Press " + Heat() + " to turn on heat</color>";
         }
 
-        static string Read(ref FieldInfo field, ref PropertyInfo value, string configName, string fallback)
+        static string Read(ref FieldInfo field, ref PropertyInfo value, ref object cached, ref string text, string configName, string fallback)
         {
             Lookup();
             object shortcut = FromEntry(ref field, ref value);
@@ -546,7 +900,13 @@ namespace Cjayride.LanternTrinket
                 shortcut = FromConfigFile(configName);
             }
 
-            string text = Format(shortcut);
+            if (ReferenceEquals(shortcut, cached) && !string.IsNullOrEmpty(text))
+            {
+                return text;
+            }
+
+            cached = shortcut;
+            text = Format(shortcut);
             return string.IsNullOrEmpty(text) ? fallback : text;
         }
 
@@ -568,18 +928,23 @@ namespace Cjayride.LanternTrinket
 
         static object FromConfigFile(string configName)
         {
-            if (_hipType == null)
+            if (string.Equals(configName, "Toggle lantern shortcut", StringComparison.Ordinal) && _fileLight != null)
             {
-                return null;
+                return _fileLight;
+            }
+
+            if (string.Equals(configName, "Toggle lantern heat shortcut", StringComparison.Ordinal) && _fileHeat != null)
+            {
+                return _fileHeat;
+            }
+
+            if (_fileLookedUp || _hipType == null)
+            {
+                return configName.IndexOf("heat", StringComparison.OrdinalIgnoreCase) >= 0 ? _fileHeat : _fileLight;
             }
 
             FieldInfo instanceField = AccessTools.Field(_hipType, "instance");
             object instance = instanceField == null ? null : instanceField.GetValue(null);
-            if (instance == null)
-            {
-                return null;
-            }
-
             ConfigFile config = null;
             try
             {
@@ -594,16 +959,25 @@ namespace Cjayride.LanternTrinket
                 return null;
             }
 
+            _fileLookedUp = true;
             foreach (KeyValuePair<ConfigDefinition, ConfigEntryBase> pair in config)
             {
-                if (pair.Key != null && string.Equals(pair.Key.Key, configName, StringComparison.Ordinal)
-                    && pair.Value != null)
+                if (pair.Key == null || pair.Value == null)
                 {
-                    return pair.Value.BoxedValue;
+                    continue;
+                }
+
+                if (string.Equals(pair.Key.Key, "Toggle lantern shortcut", StringComparison.Ordinal))
+                {
+                    _fileLight = pair.Value.BoxedValue;
+                }
+                else if (string.Equals(pair.Key.Key, "Toggle lantern heat shortcut", StringComparison.Ordinal))
+                {
+                    _fileHeat = pair.Value.BoxedValue;
                 }
             }
 
-            return null;
+            return configName.IndexOf("heat", StringComparison.OrdinalIgnoreCase) >= 0 ? _fileHeat : _fileLight;
         }
 
         static string Format(object shortcut)
@@ -620,7 +994,40 @@ namespace Cjayride.LanternTrinket
                     return null;
                 }
 
-                List<string> parts = new List<string>();
+                string main = KeyName(keys.MainKey);
+                string first = null;
+                int extra = 0;
+                foreach (KeyCode modifier in keys.Modifiers)
+                {
+                    string name = KeyName(modifier);
+                    if (string.IsNullOrEmpty(name))
+                    {
+                        continue;
+                    }
+
+                    if (first == null)
+                    {
+                        first = name;
+                    }
+
+                    extra++;
+                    if (extra > 1)
+                    {
+                        break;
+                    }
+                }
+
+                if (first == null)
+                {
+                    return main;
+                }
+
+                if (extra == 1)
+                {
+                    return first + " + " + main;
+                }
+
+                List<string> parts = new List<string>(4);
                 foreach (KeyCode modifier in keys.Modifiers)
                 {
                     string name = KeyName(modifier);
@@ -630,7 +1037,7 @@ namespace Cjayride.LanternTrinket
                     }
                 }
 
-                parts.Add(KeyName(keys.MainKey));
+                parts.Add(main);
                 return string.Join(" + ", parts.ToArray());
             }
 
@@ -664,7 +1071,7 @@ namespace Cjayride.LanternTrinket
                 return;
             }
 
-            _hipType = AccessTools.TypeByName("HipLantern.HipLantern");
+            _hipType = Mods.Type("HipLantern.HipLantern");
             if (_hipType == null)
             {
                 return;
@@ -691,30 +1098,37 @@ namespace Cjayride.LanternTrinket
         }
     }
 
-    [HarmonyPatch]
     internal static class HideDarkLanternMagic
     {
-        static bool Prepare()
-        {
-            return AccessTools.Method("EpicLoot.PlayerExtensions:GetMagicEquipment") != null;
-        }
+        static bool _applied;
 
-        static MethodBase TargetMethod()
+        public static void Apply(Harmony harmony)
         {
-            return AccessTools.Method("EpicLoot.PlayerExtensions:GetMagicEquipment");
+            if (_applied || harmony == null)
+            {
+                return;
+            }
+
+            MethodInfo method = Mods.Method("EpicLoot.PlayerExtensions", "GetMagicEquipment");
+            if (method == null)
+            {
+                return;
+            }
+
+            harmony.Patch(method, postfix: new HarmonyMethod(typeof(HideDarkLanternMagic), nameof(Postfix)));
+            _applied = true;
         }
 
         static void Postfix(List<ItemDrop.ItemData> __result)
         {
-            if (Plugin.EnchantsOnlyWhileLit == null || !Plugin.EnchantsOnlyWhileLit.Value || __result == null)
+            if (!Plugin.HideLanternMagic || Plugin.EnchantsOnlyWhileLit == null || !Plugin.EnchantsOnlyWhileLit.Value || __result == null)
             {
                 return;
             }
 
             for (int i = __result.Count - 1; i >= 0; i--)
             {
-                ItemDrop.ItemData item = __result[i];
-                if (Lit.IsLantern(item) && !Lit.LightOn(item))
+                if (Lit.IsLantern(__result[i]))
                 {
                     __result.RemoveAt(i);
                 }

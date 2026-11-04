@@ -1,22 +1,26 @@
-# Lantern Trinket — heat tooltip hotkey
+# Lantern Trinket — Valheim 1.0.21 compatibility and performance
 
 ## Goal
-Show the Hip Lantern heat/light keys from Hip Lantern's live config, not a hardcoded LeftAlt hint.
+Confirm the mod against current Valheim, then cut per-frame work that hurts load time, lag, and FPS.
 
 ## Status
-Completed. 1.0.9 built.
+Completed. 1.1.1 built (HarmonyX TypeByName spam fixed).
 
-## Cause
-The tooltip already tried to read `toggleLanternHeatShortcut`, but lookup ran once. If Hip Lantern was not loaded yet, it kept the hardcoded fallback `H + LeftAlt`. KeyboardShortcut.ToString() also printed `H + LeftAlt` instead of `Alt + H` / `Shift + H`.
+## Compatibility
+- Local Valheim: Unity `6000.0.75f1`, `assembly_valheim.dll` dated 28 Oct 2026 (Patch 1.0.21).
+- `ItemDrop.ItemData.GetTooltip` still has the six-parameter static signature this mod patches.
+- Hip Lantern no longer stores `HipLanternState`; light is read from `LanternItem.IsLightEnabled` (with customData / variant fallback).
+- SeneaL `Inv.Slots` and EpicLoot `GetMagicEquipment` / `EquipmentEffectCache.Reset` still exist.
 
 ## Changes
-- Retry Hip Lantern field lookup until the type exists
-- Read ConfigEntry.Value each hover; fall back to Hip Lantern ConfigFile
-- Format keys as Shift/Alt/Ctrl + main key
-- Version 1.0.9
+- Dropped `Update` polling and `LateUpdate` inventory scans after slot setup.
+- Cached SeneaL slot cell, SFX prefab, tooltip shortcut text, and EpicLoot hide flag.
+- Harmony postfix on `SetLightEnabled` instead of checking light every frame.
+- Version 1.1.0.
 
 ## Output
-`D:\AI-Agent-Projects\cjaycraft\Cjayride.LanternTrinket\bin\Release\net481\Cjayride.LanternTrinket.dll`
+- DLL: `D:\AI-Agent-Projects\cjaycraft\Cjayride.LanternTrinket\bin\Release\net481\Cjayride.LanternTrinket.dll`
+- Zip: `D:\AI-Agent-Projects\cjaycraft\Cjayride.LanternTrinket\dist\cjayride-LanternTrinket-1.1.0.zip`
 
 ## Next
-If heat still is not LeftAlt in-game, change Hip Lantern `Toggle lantern heat shortcut` (server-locked in current packs).
+In-game check: equip hip lantern, confirm Charm slot, light toggle still gates EpicLoot, tooltip keys still match Hip Lantern config.

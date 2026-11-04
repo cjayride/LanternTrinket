@@ -1,3 +1,13 @@
+# 1.1.1
+
+- Stop HarmonyX warning spam when Hip Lantern types are not loaded yet.
+
+# 1.1.0
+
+- Works with Valheim 1.0.21 / Unity 6 and current Hip Lantern light state APIs.
+- Removed per-frame inventory scans; light changes and EpicLoot gating use Hip Lantern events and a cached flag.
+- Slot setup retries until SeneaL and Hip Lantern exist, then stops running every frame.
+
 # 1.0.9
 
 - Light and heat tooltip keys come from Hip Lantern's live config, shown as Shift/Alt/Ctrl + key.
