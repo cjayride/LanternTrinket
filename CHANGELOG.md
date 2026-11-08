@@ -1,3 +1,7 @@
+# 1.1.2
+
+- Logging in no longer leaves arrows stacked in the Charm cell with the hip lantern.
+
 # 1.1.1
 
 - Stop HarmonyX warning spam when Hip Lantern types are not loaded yet.

@@ -15,7 +15,7 @@ namespace Cjayride.LanternTrinket
     {
         public const string PluginGuid = "cjayride.LanternTrinket";
         public const string PluginName = "Lantern Trinket";
-        public const string PluginVersion = "1.1.1";
+        public const string PluginVersion = "1.1.2";
 
         public static ConfigEntry<bool> EnchantsOnlyWhileLit;
         public static ConfigEntry<string> SeneaLSlot;
@@ -326,6 +326,8 @@ namespace Cjayride.LanternTrinket
         static int _slotX = int.MinValue;
         static int _slotY = int.MinValue;
         static int _cachedSlotId = int.MinValue;
+        static int _cachedWidth;
+        static int _cachedHeight;
 
         public static bool Ready => _ready && _slotCell != null;
 
@@ -361,12 +363,11 @@ namespace Cjayride.LanternTrinket
             ItemDrop.ItemData item = WornLantern(player);
             if (player != null && item != null)
             {
-                if (player.IsItemEquiped(item))
+                Move(player, item);
+                if (!player.IsItemEquiped(item))
                 {
-                    player.UnequipItem(item, false);
+                    player.EquipItem(item, false);
                 }
-
-                player.EquipItem(item, false);
             }
         }
 
@@ -387,7 +388,7 @@ namespace Cjayride.LanternTrinket
             int x = _slotX;
             int y = _slotY;
             int slot = SlotId();
-            if (x == int.MinValue || slot != _cachedSlotId)
+            if (x == int.MinValue || slot != _cachedSlotId || inventory.m_width != _cachedWidth || inventory.m_height != _cachedHeight)
             {
                 object cell;
                 try
@@ -421,26 +422,130 @@ namespace Cjayride.LanternTrinket
                 _slotX = x;
                 _slotY = y;
                 _cachedSlotId = slot;
+                _cachedWidth = inventory.m_width;
+                _cachedHeight = inventory.m_height;
             }
 
-            if (x < 0 || (item.m_gridPos.x == x && item.m_gridPos.y == y))
+            if (x < 0)
             {
                 return;
             }
 
-            ItemDrop.ItemData other = inventory.GetItemAt(x, y);
-            if (other != null && other != item)
+            if (item.m_gridPos.x != x || item.m_gridPos.y != y)
             {
-                if (other.m_equipped)
+                ItemDrop.ItemData other = inventory.GetItemAt(x, y);
+                if (other != null && other != item)
                 {
-                    player.UnequipItem(other, false);
+                    Vacate(player, inventory, other, item, item.m_gridPos, x, y);
                 }
 
-                other.m_gridPos = item.m_gridPos;
+                item.m_gridPos = new Vector2i(x, y);
             }
 
-            item.m_gridPos = new Vector2i(x, y);
+            EvictStacked(player, inventory, item, x, y);
             inventory.Changed();
+        }
+
+        static void EvictStacked(Player player, Inventory inventory, ItemDrop.ItemData keep, int x, int y)
+        {
+            List<ItemDrop.ItemData> items = inventory.m_inventory;
+            if (items == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < items.Count; i++)
+            {
+                ItemDrop.ItemData other = items[i];
+                if (other == null || other == keep || other.m_gridPos.x != x || other.m_gridPos.y != y)
+                {
+                    continue;
+                }
+
+                Vacate(player, inventory, other, keep, new Vector2i(-1, -1), x, y);
+            }
+        }
+
+        static void Vacate(Player player, Inventory inventory, ItemDrop.ItemData other, ItemDrop.ItemData keep, Vector2i prefer, int slotX, int slotY)
+        {
+            if (other == null)
+            {
+                return;
+            }
+
+            bool ammo = IsAmmo(other);
+            if (other.m_equipped && !ammo)
+            {
+                player.UnequipItem(other, false);
+            }
+
+            Vector2i dest = prefer;
+            if (ammo || !CanPlace(inventory, dest, keep, slotX, slotY))
+            {
+                dest = EmptyBackpack(inventory, keep, slotX, slotY);
+            }
+
+            if (dest.x < 0)
+            {
+                return;
+            }
+
+            other.m_gridPos = dest;
+        }
+
+        static bool IsAmmo(ItemDrop.ItemData item)
+        {
+            if (item?.m_shared == null)
+            {
+                return false;
+            }
+
+            ItemDrop.ItemData.ItemType type = item.m_shared.m_itemType;
+            return type == ItemDrop.ItemData.ItemType.Ammo || type == ItemDrop.ItemData.ItemType.AmmoNonEquipable;
+        }
+
+        static bool CanPlace(Inventory inventory, Vector2i pos, ItemDrop.ItemData ignore, int slotX, int slotY)
+        {
+            if (pos.x < 0 || pos.y < 0 || pos.x >= inventory.m_width || pos.y >= inventory.m_height)
+            {
+                return false;
+            }
+
+            if (pos.x == slotX && pos.y == slotY)
+            {
+                return false;
+            }
+
+            ItemDrop.ItemData occupant = inventory.GetItemAt(pos.x, pos.y);
+            return occupant == null || occupant == ignore;
+        }
+
+        static Vector2i EmptyBackpack(Inventory inventory, ItemDrop.ItemData ignore, int slotX, int slotY)
+        {
+            int backpack = Math.Min(4, inventory.m_height);
+            for (int y = 0; y < backpack; y++)
+            {
+                for (int x = 0; x < inventory.m_width; x++)
+                {
+                    if (CanPlace(inventory, new Vector2i(x, y), ignore, slotX, slotY))
+                    {
+                        return new Vector2i(x, y);
+                    }
+                }
+            }
+
+            for (int y = backpack; y < inventory.m_height; y++)
+            {
+                for (int x = 0; x < inventory.m_width; x++)
+                {
+                    if (CanPlace(inventory, new Vector2i(x, y), ignore, slotX, slotY))
+                    {
+                        return new Vector2i(x, y);
+                    }
+                }
+            }
+
+            return new Vector2i(-1, -1);
         }
 
         static object InvokeSlotCell(Inventory inventory, int slot)
@@ -716,6 +821,12 @@ namespace Cjayride.LanternTrinket
         public static bool IsLantern(ItemDrop.ItemData item)
         {
             if (item?.m_shared == null)
+            {
+                return false;
+            }
+
+            ItemDrop.ItemData.ItemType type = item.m_shared.m_itemType;
+            if (type == ItemDrop.ItemData.ItemType.Ammo || type == ItemDrop.ItemData.ItemType.AmmoNonEquipable)
             {
                 return false;
             }

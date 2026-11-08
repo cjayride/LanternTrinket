@@ -1,26 +1,23 @@
-# Lantern Trinket — Valheim 1.0.21 compatibility and performance
+# Lantern Trinket — Charm slot arrows on login
 
 ## Goal
-Confirm the mod against current Valheim, then cut per-frame work that hurts load time, lag, and FPS.
+Stop arrows (and other stacked items) from occupying the SeneaL Charm cell together with the hip lantern after login.
 
 ## Status
-Completed. 1.1.1 built (HarmonyX TypeByName spam fixed).
+Completed. 1.1.2 built.
 
-## Compatibility
-- Local Valheim: Unity `6000.0.75f1`, `assembly_valheim.dll` dated 28 Oct 2026 (Patch 1.0.21).
-- `ItemDrop.ItemData.GetTooltip` still has the six-parameter static signature this mod patches.
-- Hip Lantern no longer stores `HipLanternState`; light is read from `LanternItem.IsLightEnabled` (with customData / variant fallback).
-- SeneaL `Inv.Slots` and EpicLoot `GetMagicEquipment` / `EquipmentEffectCache.Reset` still exist.
+## Cause
+`WispSlot.Move` returned early when the lantern was already on the Charm cell, so any other item stacked on that cell (often ammo) stayed there. Login restore plus the SlotFor/IsCharm patches then drew both in Charm.
 
 ## Changes
-- Dropped `Update` polling and `LateUpdate` inventory scans after slot setup.
-- Cached SeneaL slot cell, SFX prefab, tooltip shortcut text, and EpicLoot hide flag.
-- Harmony postfix on `SetLightEnabled` instead of checking light every frame.
-- Version 1.1.0.
+- Evict every non-lantern item stacked on the Charm cell into a free backpack slot.
+- Ammo is never treated as a lantern and is not unequipped; it is only moved off Charm.
+- Recache Charm coordinates if inventory size changes.
+- Version 1.1.2.
 
 ## Output
 - DLL: `D:\AI-Agent-Projects\cjaycraft\Cjayride.LanternTrinket\bin\Release\net481\Cjayride.LanternTrinket.dll`
-- Zip: `D:\AI-Agent-Projects\cjaycraft\Cjayride.LanternTrinket\dist\cjayride-LanternTrinket-1.1.0.zip`
+- Zip: `D:\AI-Agent-Projects\cjaycraft\Cjayride.LanternTrinket\dist\cjayride-LanternTrinket-1.1.2.zip`
 
 ## Next
-In-game check: equip hip lantern, confirm Charm slot, light toggle still gates EpicLoot, tooltip keys still match Hip Lantern config.
+In-game: log in with hip lantern equipped and arrows selected; Charm should show only the lantern, arrows stay in quiver/backpack.
