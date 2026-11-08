@@ -15,22 +15,27 @@ namespace Cjayride.LanternTrinket
     {
         public const string PluginGuid = "cjayride.LanternTrinket";
         public const string PluginName = "Lantern Trinket";
-        public const string PluginVersion = "1.1.2";
+        public const string PluginVersion = "1.1.3";
 
         public static ConfigEntry<bool> EnchantsOnlyWhileLit;
         public static ConfigEntry<string> SeneaLSlot;
         static Harmony _harmony;
+        internal static BepInEx.Logging.ManualLogSource Log;
         static MethodInfo _resetCache;
         static MethodInfo _setLight;
         static MethodInfo _setState;
         static readonly object[] _one = new object[1];
         static readonly object[] _two = new object[2];
         static bool _wispPatched;
+        internal static bool WispPatched => _wispPatched;
         static bool _haveLight;
         static bool _sawLight;
         static bool _setupFinished;
         static int _setupTicks;
         static float _nextSetup;
+        static int _repairRuns;
+        static float _nextRepair;
+        static Player _repairPlayer;
         internal static bool HideLanternMagic;
 
         private void Awake()
@@ -42,6 +47,7 @@ namespace Cjayride.LanternTrinket
                     "SeneaL UI equipment slot the hip lantern equips into. Charm is the wisplight and wishbone cell.",
                     new AcceptableValueList<string>("Charm", "Belt", "Trinket", "Head", "Cape", "Chest", "Legs")));
             _harmony = new Harmony(PluginGuid);
+            Log = Logger;
             _harmony.PatchAll();
             TryPatchMods();
             Logger.LogInfo("Hip lantern slot comes from the SeneaL slot config. Enchants count only while the light is on.");
@@ -51,6 +57,7 @@ namespace Cjayride.LanternTrinket
         {
             if (_setupFinished)
             {
+                RepairTick();
                 return;
             }
 
@@ -69,12 +76,43 @@ namespace Cjayride.LanternTrinket
             _setupTicks++;
             Mods.Retry();
             TryPatchMods();
-            WispSlot.Apply();
+            // EnsureWispPatch first: WispSlot.Move needs the IsCharm/SlotFor
+            // postfixes, and WispSlot.Apply only runs its equip once per session.
             EnsureWispPatch();
+            WispSlot.Apply();
             if (_setupTicks >= 20)
             {
                 _setupFinished = true;
             }
+        }
+
+        // A corrupted save shows up on login, and a lantern is not always equipped
+        // then, so the doll-cell repair also runs on its own for a short window
+        // after entering a world. SeneaL's Slots.Ready gates it until the mod's
+        // rows exist, and each pass is a single inventory walk.
+        void RepairTick()
+        {
+            Player player = Player.m_localPlayer;
+            if (player == null)
+            {
+                return;
+            }
+
+            if (player != _repairPlayer)
+            {
+                _repairPlayer = player;
+                _repairRuns = 0;
+                _nextRepair = 0f;
+            }
+
+            if (_repairRuns >= 6 || Time.unscaledTime < _nextRepair)
+            {
+                return;
+            }
+
+            _nextRepair = Time.unscaledTime + 2f;
+            _repairRuns++;
+            WispSlot.RepairNow();
         }
 
         static void TryPatchMods()
@@ -320,16 +358,25 @@ namespace Cjayride.LanternTrinket
         static FieldInfo _useUtility;
         static MethodInfo _apply;
         static MethodInfo _slotCell;
-        static FieldInfo _cellX;
-        static FieldInfo _cellY;
-        static bool _ready;
-        static int _slotX = int.MinValue;
-        static int _slotY = int.MinValue;
-        static int _cachedSlotId = int.MinValue;
-        static int _cachedWidth;
-        static int _cachedHeight;
+        static bool _layoutReady;
+        static MethodInfo _seneaReady;
+        static MethodInfo _relocate;
+        static MethodInfo _isPlayer;
+        static MethodInfo _shown;
+        static MethodInfo _evict;
+        static MethodInfo _fits;
+        static MethodInfo _isEquipCell;
+        static MethodInfo _eqRow;
+        static MethodInfo _slotFor;
+        static readonly object[] _one = new object[1];
+        static readonly object[] _two = new object[2];
+        static readonly object[] _three = new object[3];
+        static readonly object[] _evictArgs = new object[2];
+        static readonly object[] _fitsArgs = new object[4];
+        static bool _warnedOff;
+        static bool _healReported;
 
-        public static bool Ready => _ready && _slotCell != null;
+        public static bool Ready => _layoutReady && _slotCell != null;
 
         public static bool CharmChosen()
         {
@@ -338,7 +385,7 @@ namespace Cjayride.LanternTrinket
 
         public static void Apply()
         {
-            if (_ready)
+            if (_layoutReady)
             {
                 return;
             }
@@ -350,7 +397,7 @@ namespace Cjayride.LanternTrinket
             }
 
             SetConfig(_useUtility, false);
-            _ready = true;
+            _layoutReady = true;
             try
             {
                 _apply?.Invoke(null, null);
@@ -380,178 +427,434 @@ namespace Cjayride.LanternTrinket
 
             Lookup();
             Inventory inventory = player.GetInventory();
-            if (inventory == null || _slotCell == null)
+            if (inventory == null || _relocate == null)
             {
                 return;
             }
 
-            int x = _slotX;
-            int y = _slotY;
+            // SeneaL UI draws the equipment doll, the food, action, key, wallet and
+            // quiver rows as cells of the player's own inventory grid. The doll row
+            // is Slots.EqRow = height - Tail - 5, and its cells are Head 0, Cape 1,
+            // Chest 2, Belt 3, Legs 4, Trinket 5, Quiver 6, Charm 7. Writing
+            // m_gridPos by hand puts items into those cells, so the game shows a
+            // potion in the Head slot and it is saved that way. Anything SeneaL
+            // finds in the quiver tail rows is dropped on the ground.
+            // Slots.Relocate is the only supported way into a doll cell: it moves
+            // the occupant to a legal main-grid cell, keeps worn equipment where
+            // it is, and calls Inventory.Changed itself.
+            // Slots.Relocate puts an item in Slots.SlotFor(item)'s cell. SeneaL maps
+            // a utility item (ItemType 18) to the Belt cell; only this mod's
+            // IsCharm/SlotFor postfixes make it say Charm. Move must not run before
+            // those patches exist, and not before SeneaL has built its rows.
+            if (!Plugin.WispPatched)
+            {
+                return;
+            }
+
+            if (!SeneaReady(inventory) || !SeneaPlayer(inventory))
+            {
+                return;
+            }
+
             int slot = SlotId();
-            if (x == int.MinValue || slot != _cachedSlotId || inventory.m_width != _cachedWidth || inventory.m_height != _cachedHeight)
+            if (!SlotShown(slot))
             {
-                object cell;
-                try
-                {
-                    cell = InvokeSlotCell(inventory, slot);
-                }
-                catch (Exception)
-                {
-                    return;
-                }
-
-                if (cell == null)
-                {
-                    return;
-                }
-
-                if (_cellX == null)
-                {
-                    Type type = cell.GetType();
-                    _cellX = type.GetField("x");
-                    _cellY = type.GetField("y");
-                }
-
-                if (_cellX == null || _cellY == null)
-                {
-                    return;
-                }
-
-                x = (int)_cellX.GetValue(cell);
-                y = (int)_cellY.GetValue(cell);
-                _slotX = x;
-                _slotY = y;
-                _cachedSlotId = slot;
-                _cachedWidth = inventory.m_width;
-                _cachedHeight = inventory.m_height;
-            }
-
-            if (x < 0)
-            {
+                WarnSlotOff(slot);
                 return;
             }
 
-            if (item.m_gridPos.x != x || item.m_gridPos.y != y)
+            try
             {
-                ItemDrop.ItemData other = inventory.GetItemAt(x, y);
-                if (other != null && other != item)
-                {
-                    Vacate(player, inventory, other, item, item.m_gridPos, x, y);
-                }
-
-                item.m_gridPos = new Vector2i(x, y);
+                _two[0] = inventory;
+                _two[1] = item;
+                _relocate.Invoke(null, _two);
+            }
+            catch (Exception)
+            {
+            }
+            finally
+            {
+                _two[0] = null;
+                _two[1] = null;
             }
 
-            EvictStacked(player, inventory, item, x, y);
-            inventory.Changed();
+            Repair(inventory);
         }
 
-        static void EvictStacked(Player player, Inventory inventory, ItemDrop.ItemData keep, int x, int y)
+        public static void RepairNow()
         {
+            Player player = Player.m_localPlayer;
+            if (player == null || !Plugin.WispPatched)
+            {
+                return;
+            }
+
+            Lookup();
+            Inventory inventory = player.GetInventory();
+            if (inventory == null || !SeneaReady(inventory) || !SeneaPlayer(inventory))
+            {
+                return;
+            }
+
+            Repair(inventory);
+        }
+
+        // 1.1.2 and earlier wrote m_gridPos straight into SeneaL's reserved rows, so
+        // a save can already hold a potion in the Head cell, a backpack in the Charm
+        // cell, or two items stacked on one doll cell. SeneaL's own rule for those
+        // cells is Slots.Fits; an item that does not fit belongs in the main grid.
+        // Slots.Evict is SeneaL's supported way to move such an item there, and it
+        // never unequips anything, so ammo stays worn.
+        static void Repair(Inventory inventory)
+        {
+            if (_evict == null || _fits == null || _isEquipCell == null || _slotFor == null)
+            {
+                return;
+            }
+
             List<ItemDrop.ItemData> items = inventory.m_inventory;
             if (items == null)
             {
                 return;
             }
 
+            Player player = Player.m_localPlayer;
+            int width = inventory.m_width;
+            int eqRow = EqRow(inventory);
+            int healed = 0;
             for (int i = 0; i < items.Count; i++)
             {
-                ItemDrop.ItemData other = items[i];
-                if (other == null || other == keep || other.m_gridPos.x != x || other.m_gridPos.y != y)
+                ItemDrop.ItemData item = items[i];
+                if (item == null || item.m_shared == null)
                 {
                     continue;
                 }
 
-                Vacate(player, inventory, other, keep, new Vector2i(-1, -1), x, y);
+                // The lantern is this mod's item; Move decides where it sits.
+                // Repair must never evict it, not even when SeneaL's Fits() calls
+                // the cell illegal (the Belt slot is one such case).
+                if (Lit.IsLantern(item))
+                {
+                    continue;
+                }
+
+                int x = item.m_gridPos.x;
+                int y = item.m_gridPos.y;
+                if (x < 0 || y < 0 || x >= width)
+                {
+                    continue;
+                }
+
+                // Only the equipment doll cells are repaired. The food, action, key
+                // and wallet rows and the quiver rows belong to SeneaL and to the
+                // mods that own them, and moving their contents is not ours to do.
+                if (y != eqRow)
+                {
+                    continue;
+                }
+
+                if (!CallSlot(inventory, x, y))
+                {
+                    continue;
+                }
+
+                if (Fits(inventory, x, y, item))
+                {
+                    continue;
+                }
+
+                if (item.m_equipped)
+                {
+                    // Two items on one doll cell: 1.1.2 stacked them there. The
+                    // lantern keeps the cell (it is skipped above), everything else
+                    // goes to the main grid. SeneaL's Evict leaves m_equipped alone,
+                    // so worn ammo stays worn.
+                    if (CountAt(inventory, x, y) > 1)
+                    {
+                        Evict(inventory, item);
+                        if (item.m_gridPos.x != x || item.m_gridPos.y != y)
+                        {
+                            healed++;
+                        }
+                    }
+
+                    // Gear with a slot of its own (backpack, quiver, rings, neck,
+                    // finger) belongs in that cell, worn. Relocate is SeneaL's own
+                    // move: it swaps a free cell's occupant and does nothing for an
+                    // item SeneaL has no slot for (potions, for example).
+                    Relocate(inventory, item);
+                    if (item.m_gridPos.x != x || item.m_gridPos.y != y)
+                    {
+                        if (!Fits(inventory, item.m_gridPos.x, item.m_gridPos.y, item))
+                        {
+                            continue;
+                        }
+
+                        healed++;
+                        continue;
+                    }
+
+                    // Anything SeneaL gives a doll slot to (cape, backpack, quiver,
+                    // rings, neck, finger, armour, utility) stays worn: if Relocate
+                    // could not place it, its owner mod (for example SeneaL Cape On
+                    // Login) is responsible for it, not this repair. Only slotless
+                    // items — potions, food, tools — are taken off and evicted.
+                    // That is the 1.1.2 corruption signature: a potion in the head.
+                    if (IsAmmo(item) || SlotFor(item) >= 0)
+                    {
+                        continue;
+                    }
+
+                    if (player != null)
+                    {
+                        player.UnequipItem(item, false);
+                    }
+
+                    // SeneaL's UnequipItem postfix evicts the item into the grid.
+                    // It is skipped when Suspend is on, so evict here as well.
+                    Evict(inventory, item);
+                    if (item.m_gridPos.x != x || item.m_gridPos.y != y)
+                    {
+                        healed++;
+                    }
+
+                    continue;
+                }
+
+                Evict(inventory, item);
+                if (item.m_gridPos.x != x || item.m_gridPos.y != y)
+                {
+                    healed++;
+                }
+            }
+
+            if (healed > 0 && !_healReported)
+            {
+                _healReported = true;
+                Plugin.Log.LogWarning("Moved " + healed + " item(s) out of the SeneaL equipment doll cells. These "
+                    + "were placed there by Lantern Trinket 1.1.2, which wrote grid positions directly. Gear with a "
+                    + "slot of its own (backpack, quiver) is back in that slot; anything else is in the inventory "
+                    + "and can be equipped again.");
             }
         }
 
-        static void Vacate(Player player, Inventory inventory, ItemDrop.ItemData other, ItemDrop.ItemData keep, Vector2i prefer, int slotX, int slotY)
+        // SeneaL's own answer to "does this item own a doll cell?". A cape (Shoulder)
+        // is 1, a backpack 8, a quiver 6, rings 9/10. -1 means slotless: a potion,
+        // food, a tool. Unbound means unknown, so answer as if it has a slot and
+        // leave the item alone.
+        static int SlotFor(ItemDrop.ItemData item)
         {
-            if (other == null)
+            if (_slotFor == null)
+            {
+                return int.MaxValue;
+            }
+
+            try
+            {
+                _one[0] = item;
+                return (int)_slotFor.Invoke(null, _one);
+            }
+            catch (Exception)
+            {
+                return int.MaxValue;
+            }
+        }
+
+        static int EqRow(Inventory inventory)
+        {
+            if (_eqRow == null)
+            {
+                return int.MinValue;
+            }
+
+            try
+            {
+                _one[0] = inventory;
+                return (int)_eqRow.Invoke(null, _one);
+            }
+            catch (Exception)
+            {
+                return int.MinValue;
+            }
+        }
+
+        static int CountAt(Inventory inventory, int x, int y)
+        {
+            List<ItemDrop.ItemData> items = inventory.m_inventory;
+            if (items == null)
+            {
+                return 0;
+            }
+
+            int count = 0;
+            for (int i = 0; i < items.Count; i++)
+            {
+                ItemDrop.ItemData item = items[i];
+                if (item != null && item.m_gridPos.x == x && item.m_gridPos.y == y)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        static void Relocate(Inventory inventory, ItemDrop.ItemData item)
+        {
+            if (_relocate == null)
             {
                 return;
             }
 
-            bool ammo = IsAmmo(other);
-            if (other.m_equipped && !ammo)
+            try
             {
-                player.UnequipItem(other, false);
+                _two[0] = inventory;
+                _two[1] = item;
+                _relocate.Invoke(null, _two);
             }
-
-            Vector2i dest = prefer;
-            if (ammo || !CanPlace(inventory, dest, keep, slotX, slotY))
+            catch (Exception)
             {
-                dest = EmptyBackpack(inventory, keep, slotX, slotY);
             }
-
-            if (dest.x < 0)
+            finally
             {
-                return;
+                _two[0] = null;
+                _two[1] = null;
             }
-
-            other.m_gridPos = dest;
         }
 
         static bool IsAmmo(ItemDrop.ItemData item)
         {
-            if (item?.m_shared == null)
-            {
-                return false;
-            }
-
             ItemDrop.ItemData.ItemType type = item.m_shared.m_itemType;
             return type == ItemDrop.ItemData.ItemType.Ammo || type == ItemDrop.ItemData.ItemType.AmmoNonEquipable;
         }
 
-        static bool CanPlace(Inventory inventory, Vector2i pos, ItemDrop.ItemData ignore, int slotX, int slotY)
+        static void Evict(Inventory inventory, ItemDrop.ItemData item)
         {
-            if (pos.x < 0 || pos.y < 0 || pos.x >= inventory.m_width || pos.y >= inventory.m_height)
+            try
+            {
+                _evictArgs[0] = inventory;
+                _evictArgs[1] = item;
+                _evict.Invoke(null, _evictArgs);
+            }
+            catch (Exception)
+            {
+            }
+            finally
+            {
+                _evictArgs[0] = null;
+                _evictArgs[1] = null;
+            }
+        }
+
+        static bool CallSlot(Inventory inventory, int x, int y)
+        {
+            try
+            {
+                _three[0] = inventory;
+                _three[1] = x;
+                _three[2] = y;
+                return (bool)_isEquipCell.Invoke(null, _three);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+            finally
+            {
+                _three[0] = null;
+            }
+        }
+
+        static bool Fits(Inventory inventory, int x, int y, ItemDrop.ItemData item)
+        {
+            if (_fits == null)
+            {
+                return true;
+            }
+
+            try
+            {
+                _fitsArgs[0] = inventory;
+                _fitsArgs[1] = item;
+                _fitsArgs[2] = x;
+                _fitsArgs[3] = y;
+                return (bool)_fits.Invoke(null, _fitsArgs);
+            }
+            catch (Exception)
+            {
+                return true;
+            }
+            finally
+            {
+                _fitsArgs[0] = null;
+                _fitsArgs[1] = null;
+            }
+        }
+
+        static bool SlotShown(int slot)
+        {
+            if (_shown == null)
+            {
+                return true;
+            }
+
+            try
+            {
+                return (bool)_shown.Invoke(null, new object[] { slot });
+            }
+            catch (Exception)
+            {
+                return true;
+            }
+        }
+
+        static void WarnSlotOff(int slot)
+        {
+            if (_warnedOff)
+            {
+                return;
+            }
+
+            _warnedOff = true;
+            Plugin.Log.LogWarning("The SeneaL " + ChosenName() + " slot is switched off in the SeneaL UI config, "
+                + "so the hip lantern stays in the normal inventory rows. Pick a slot SeneaL shows, "
+                + "or enable that slot in the SeneaL UI config.");
+        }
+
+        static bool SeneaReady(Inventory inventory)
+        {
+            if (_seneaReady == null)
             {
                 return false;
             }
 
-            if (pos.x == slotX && pos.y == slotY)
+            try
+            {
+                _one[0] = inventory;
+                return (bool)_seneaReady.Invoke(null, _one);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        static bool SeneaPlayer(Inventory inventory)
+        {
+            if (_isPlayer == null)
             {
                 return false;
             }
 
-            ItemDrop.ItemData occupant = inventory.GetItemAt(pos.x, pos.y);
-            return occupant == null || occupant == ignore;
-        }
-
-        static Vector2i EmptyBackpack(Inventory inventory, ItemDrop.ItemData ignore, int slotX, int slotY)
-        {
-            int backpack = Math.Min(4, inventory.m_height);
-            for (int y = 0; y < backpack; y++)
+            try
             {
-                for (int x = 0; x < inventory.m_width; x++)
-                {
-                    if (CanPlace(inventory, new Vector2i(x, y), ignore, slotX, slotY))
-                    {
-                        return new Vector2i(x, y);
-                    }
-                }
+                _one[0] = inventory;
+                return (bool)_isPlayer.Invoke(null, _one);
             }
-
-            for (int y = backpack; y < inventory.m_height; y++)
+            catch (Exception)
             {
-                for (int x = 0; x < inventory.m_width; x++)
-                {
-                    if (CanPlace(inventory, new Vector2i(x, y), ignore, slotX, slotY))
-                    {
-                        return new Vector2i(x, y);
-                    }
-                }
+                return false;
             }
-
-            return new Vector2i(-1, -1);
-        }
-
-        static object InvokeSlotCell(Inventory inventory, int slot)
-        {
-            object[] args = { inventory, slot };
-            return _slotCell.Invoke(null, args);
         }
 
         static string ChosenName()
@@ -631,14 +934,28 @@ namespace Cjayride.LanternTrinket
 
         static void Lookup()
         {
-            if (_slotCell != null && _useUtility != null)
+            Type slots = Mods.Type("SeneaLUI.Inv.Slots");
+            if (_slotCell == null && slots != null)
+            {
+                _slotCell = AccessTools.Method(slots, "SlotCell");
+                _seneaReady = AccessTools.Method(slots, "Ready");
+                _relocate = AccessTools.Method(slots, "Relocate");
+                _isPlayer = AccessTools.Method(slots, "IsPlayer");
+                _shown = AccessTools.Method(slots, "Shown");
+                _evict = AccessTools.Method(slots, "Evict");
+                _fits = AccessTools.Method(slots, "Fits");
+                _isEquipCell = AccessTools.Method(slots, "IsEquipCell");
+                _eqRow = AccessTools.Method(slots, "EqRow");
+                _slotFor = AccessTools.Method(slots, "SlotFor");
+            }
+
+            if (_useUtility != null && _apply != null && _slotCell != null)
             {
                 return;
             }
 
             Type plugin = Mods.Type("HipLantern.HipLantern");
             Type lantern = Mods.Type("HipLantern.LanternItem");
-            Type slots = Mods.Type("SeneaLUI.Inv.Slots");
             if (_useUtility == null && plugin != null)
             {
                 _useUtility = AccessTools.Field(plugin, "itemSlotUtility");
@@ -647,11 +964,6 @@ namespace Cjayride.LanternTrinket
             if (_apply == null && lantern != null)
             {
                 _apply = AccessTools.Method(lantern, "PatchLanternItemOnConfigChange");
-            }
-
-            if (_slotCell == null && slots != null)
-            {
-                _slotCell = AccessTools.Method(slots, "SlotCell");
             }
         }
     }

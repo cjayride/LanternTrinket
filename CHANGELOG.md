@@ -1,3 +1,11 @@
+# 1.1.3
+
+- Fixed: logging in could put items in the wrong equipment slots (a potion in the head slot, a backpack in the charm slot) and leave items on the ground. The mod wrote inventory grid positions by hand, and SeneaL UI draws the equipment doll, the food, action, key, wallet and quiver rows as cells of that same grid.
+- The lantern now moves through SeneaL's own `Slots.Relocate`, the same call SeneaL uses when it equips something, so nothing else is displaced.
+- Saves damaged by 1.1.2 are repaired on login: items sitting in equipment doll cells they do not belong in go back to the normal inventory rows. Gear with a slot of its own (cape, backpack, quiver, rings, neck, finger) is moved into that slot and stays equipped; worn ammo is never taken off; the hip lantern is never evicted. Worn gear that SeneaL has a slot for is never unequipped, so slot owners such as SeneaL Cape On Login keep control of their items.
+- The mod no longer scans the whole inventory height for empty cells.
+- Warns in the log when the chosen SeneaL slot is switched off in the SeneaL UI config.
+
 # 1.1.2
 
 - Logging in no longer leaves arrows stacked in the Charm cell with the hip lantern.
