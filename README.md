@@ -17,7 +17,7 @@ Lantern Trinket integrates **Hip Lantern**, **SeneaL UI**, and **EpicLoot** so y
 - **SeneaL slot** selects which cell the lantern uses. Default is **Key**.
 - **Charm** is the wisplight and wishbone equipment cell.
 - Other available cells include Belt, Trinket, Head, Cape, Chest, and Legs.
-- Equipping the lantern swaps it with the item already occupying the selected cell.
+- Equipping the lantern swaps it with the item already occupying the selected cell. It does **not** use the vanilla trinket/necklace slot (unless you set Lantern cell to Trinket).
 - Default Key cell leaves Charm for Wishbone and Wisplight (SeneaL can wear both charms).
 - The hip lantern model remains attached to your character.
 

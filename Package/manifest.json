@@ -1,6 +1,6 @@
 {
   "name": "LanternTrinket",
-  "version_number": "1.1.4",
+  "version_number": "1.1.5",
   "website_url": "https://github.com/cjayride/LanternTrinket",
   "description": "Hip Lantern enchants count only while the light is on. Default SeneaL cell is Key so Charm stays for Wisplight and Wishbone.",
   "dependencies": [

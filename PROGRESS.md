@@ -1,9 +1,3 @@
-# 1.1.4 — lantern on Key cell
+# 1.1.5 shipped
 
-Goal: Hip lantern in a SeneaL key slot (still equipped). Wishbone back on Charm with Wisplight.
-
-LanternTrinket: default Lantern cell = Key; IsKey postfix; PlaceInKey; ExclusiveUtility removed.
-SeneaLHudLayout 1.5.78: WishboneInKeySlot off Relocates wishbone to Charm.
-Pack cfg: WishboneInKeySlot = false.
-
-Status: built.
+Status: released (git tag + zip + beta configs).

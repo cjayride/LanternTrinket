@@ -15,7 +15,7 @@ namespace Cjayride.LanternTrinket
     {
         public const string PluginGuid = "cjayride.LanternTrinket";
         public const string PluginName = "Lantern Trinket";
-        public const string PluginVersion = "1.1.4";
+        public const string PluginVersion = "1.1.5";
 
         public static ConfigEntry<bool> EnchantsOnlyWhileLit;
         public static ConfigEntry<string> SeneaLSlot;
@@ -37,6 +37,7 @@ namespace Cjayride.LanternTrinket
         static float _nextRepair;
         static Player _repairPlayer;
         internal static bool HideLanternMagic;
+        internal static bool InstantLanternEquip;
 
         private void Awake()
         {
@@ -120,6 +121,7 @@ namespace Cjayride.LanternTrinket
             LightToggled.Apply(_harmony);
             QuietEnchantCue.Apply(_harmony);
             HideDarkLanternMagic.Apply(_harmony);
+            HipSlot.Apply(_harmony);
         }
 
         void EnsureWispPatch()
@@ -373,6 +375,7 @@ namespace Cjayride.LanternTrinket
         static MethodInfo _isKeyCell;
         static MethodInfo _freeKey;
         static MethodInfo _pouchChanged;
+        static MethodInfo _findMain;
         static PropertyInfo _keysOn;
         static readonly object[] _one = new object[1];
         static readonly object[] _two = new object[2];
@@ -403,6 +406,8 @@ namespace Cjayride.LanternTrinket
             }
 
             SetConfig(_useUtility, false);
+            HipSlot.KeepCustomType();
+            HipSlot.RewriteItems();
             _layoutReady = true;
             try
             {
@@ -419,7 +424,15 @@ namespace Cjayride.LanternTrinket
                 Move(player, item);
                 if (!player.IsItemEquiped(item))
                 {
-                    player.EquipItem(item, false);
+                    Plugin.InstantLanternEquip = true;
+                    try
+                    {
+                        player.EquipItem(item, false);
+                    }
+                    finally
+                    {
+                        Plugin.InstantLanternEquip = false;
+                    }
                 }
 
             }
@@ -428,6 +441,16 @@ namespace Cjayride.LanternTrinket
         public static bool KeyChosen()
         {
             return string.Equals(ChosenName(), "Key", StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static bool TrinketChosen()
+        {
+            return string.Equals(ChosenName(), "Trinket", StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static bool BeltChosen()
+        {
+            return string.Equals(ChosenName(), "Belt", StringComparison.OrdinalIgnoreCase);
         }
 
         public static void Move(Player player, ItemDrop.ItemData item)
@@ -564,11 +587,37 @@ namespace Cjayride.LanternTrinket
 
         static bool InKeyCell(Inventory inventory, ItemDrop.ItemData item)
         {
+            return KeyCell(inventory, item.m_gridPos.x, item.m_gridPos.y);
+        }
+
+        public static bool DropWaits(Inventory inventory, int x, int y)
+        {
+            Lookup();
+            if (inventory == null)
+            {
+                return false;
+            }
+
+            if (KeyChosen())
+            {
+                return KeyCell(inventory, x, y);
+            }
+
+            return CallSlot(inventory, x, y);
+        }
+
+        static bool KeyCell(Inventory inventory, int x, int y)
+        {
+            if (_isKeyCell == null)
+            {
+                return false;
+            }
+
             try
             {
                 _three[0] = inventory;
-                _three[1] = item.m_gridPos.x;
-                _three[2] = item.m_gridPos.y;
+                _three[1] = x;
+                _three[2] = y;
                 return (bool)_isKeyCell.Invoke(null, _three);
             }
             catch (Exception)
@@ -614,6 +663,103 @@ namespace Cjayride.LanternTrinket
             }
 
             Repair(inventory);
+            HipSlot.RewriteItems();
+            DropUnequippedLantern(inventory);
+        }
+
+        static void DropUnequippedLantern(Inventory inventory)
+        {
+            if (!KeyChosen())
+            {
+                return;
+            }
+
+            List<ItemDrop.ItemData> items = inventory.m_inventory;
+            if (items == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < items.Count; i++)
+            {
+                ItemDrop.ItemData item = items[i];
+                if (item != null && !item.m_equipped && Lit.IsLantern(item) && InKeyCell(inventory, item))
+                {
+                    ToMain(inventory, item);
+                }
+            }
+        }
+
+        public static void OnUnequip(Player player, ItemDrop.ItemData item)
+        {
+            if (player == null || !Lit.IsLantern(item))
+            {
+                return;
+            }
+
+            Lookup();
+            Inventory inventory = player.GetInventory();
+            if (inventory == null)
+            {
+                return;
+            }
+
+            // Key cells are not equipment doll cells. SeneaL Evict only moves
+            // doll cells, so an unequipped lantern would sit in the key row
+            // like a dungeon key until the player dragged it out.
+            if (KeyChosen() && InKeyCell(inventory, item))
+            {
+                ToMain(inventory, item);
+                return;
+            }
+
+            Evict(inventory, item);
+        }
+
+        static void ToMain(Inventory inventory, ItemDrop.ItemData item)
+        {
+            if (_findMain == null)
+            {
+                return;
+            }
+
+            object cell;
+            try
+            {
+                _two[0] = inventory;
+                _two[1] = true;
+                cell = _findMain.Invoke(null, _two);
+            }
+            catch (Exception)
+            {
+                return;
+            }
+            finally
+            {
+                _two[0] = null;
+            }
+
+            if (!(cell is Vector2i pos) || pos.x < 0)
+            {
+                return;
+            }
+
+            item.m_gridPos = pos;
+            if (_pouchChanged != null)
+            {
+                try
+                {
+                    _one[0] = inventory;
+                    _pouchChanged.Invoke(null, _one);
+                }
+                catch (Exception)
+                {
+                }
+                finally
+                {
+                    _one[0] = null;
+                }
+            }
         }
 
         // 1.1.2 and earlier wrote m_gridPos straight into SeneaL's reserved rows, so
@@ -1065,6 +1211,7 @@ namespace Cjayride.LanternTrinket
                 _slotFor = AccessTools.Method(slots, "SlotFor");
                 _isKeyCell = AccessTools.Method(slots, "IsKeyCell");
                 _keysOn = AccessTools.Property(slots, "KeysOn");
+                _findMain = AccessTools.Method(slots, "FindMain");
             }
 
             if (_freeKey == null)
@@ -1087,6 +1234,7 @@ namespace Cjayride.LanternTrinket
             if (_useUtility == null && plugin != null)
             {
                 _useUtility = AccessTools.Field(plugin, "itemSlotUtility");
+                HipSlot.Bind(plugin);
             }
 
             if (_apply == null && lantern != null)
@@ -1096,9 +1244,204 @@ namespace Cjayride.LanternTrinket
         }
     }
 
+    // Hip Lantern's pack config still had Slot type = 24 (vanilla Trinket). EquipItem
+    // then unequips m_trinketItem (the necklace). Custom type 56 is Hip Lantern's
+    // own hip attach and does not share the necklace cell. H only finds a lantern
+    // whose type matches GetItemType, so a type-24 lantern also fails the toggle
+    // after the necklace steal, or after the necklace is put back on.
+    internal static class HipSlot
+    {
+        public const int CustomType = 56;
+        static FieldInfo _slotType;
+        static MethodInfo _patchItems;
+        static bool _typePatched;
+
+        public static void Bind(Type plugin)
+        {
+            if (_slotType == null && plugin != null)
+            {
+                _slotType = AccessTools.Field(plugin, "itemSlotType");
+            }
+        }
+
+        public static void Apply(Harmony harmony)
+        {
+            if (_typePatched || harmony == null)
+            {
+                return;
+            }
+
+            MethodInfo getType = Mods.Method("HipLantern.LanternItem", "GetItemType");
+            if (getType == null)
+            {
+                return;
+            }
+
+            // Prefix skip: Hip Lantern's H toggle and IsLanternItem both require
+            // item type == GetItemType(). A postfix leaving config at 24 still
+            // lets EquipItem steal the necklace if Coerce has not run yet.
+            try
+            {
+                harmony.Patch(getType, prefix: new HarmonyMethod(typeof(HipSlot), nameof(UseCustomType)));
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError("Could not patch HipLantern.GetItemType: " + ex.Message);
+                return;
+            }
+
+            _typePatched = true;
+            KeepCustomType();
+            RewriteItems();
+            Plugin.Log.LogInfo("Hip lantern item type is custom 56, not vanilla Trinket. Necklace stays equipped.");
+        }
+
+        public static void KeepCustomType()
+        {
+            if (WispSlot.TrinketChosen())
+            {
+                return;
+            }
+
+            Bind(Mods.Type("HipLantern.HipLantern"));
+            if (_slotType == null)
+            {
+                return;
+            }
+
+            object entry = _slotType.GetValue(null);
+            PropertyInfo value = entry == null ? null : entry.GetType().GetProperty("Value");
+            if (value == null)
+            {
+                return;
+            }
+
+            object now = value.GetValue(entry, null);
+            int n = now is int i ? i : 0;
+            if (n == CustomType)
+            {
+                return;
+            }
+
+            if (n == (int)ItemDrop.ItemData.ItemType.Trinket
+                || n == (int)ItemDrop.ItemData.ItemType.Utility
+                || n == (int)ItemDrop.ItemData.ItemType.Helmet
+                || n == (int)ItemDrop.ItemData.ItemType.Chest
+                || n == (int)ItemDrop.ItemData.ItemType.Legs
+                || n == (int)ItemDrop.ItemData.ItemType.Shoulder)
+            {
+                value.SetValue(entry, CustomType, null);
+            }
+        }
+
+        public static void RewriteItems()
+        {
+            if (WispSlot.TrinketChosen())
+            {
+                return;
+            }
+
+            Player player = Player.m_localPlayer;
+            Inventory inventory = player == null ? null : player.GetInventory();
+            List<ItemDrop.ItemData> items = inventory == null ? null : inventory.m_inventory;
+            if (items != null)
+            {
+                for (int i = 0; i < items.Count; i++)
+                {
+                    Coerce(items[i]);
+                }
+            }
+
+            if (_patchItems == null)
+            {
+                _patchItems = Mods.Method("HipLantern.LanternItem", "PatchLanternItemOnConfigChange");
+            }
+
+            try
+            {
+                _patchItems?.Invoke(null, null);
+            }
+            catch (Exception)
+            {
+            }
+
+            ReleaseNecklace(player);
+        }
+
+        public static void ReleaseNecklace(Player player)
+        {
+            if (player == null || WispSlot.TrinketChosen())
+            {
+                return;
+            }
+
+            ItemDrop.ItemData worn = player.m_trinketItem;
+            if (worn == null || !Lit.IsLantern(worn))
+            {
+                return;
+            }
+
+            Coerce(worn);
+            player.m_trinketItem = null;
+            if (!player.IsItemEquiped(worn))
+            {
+                Plugin.InstantLanternEquip = true;
+                try
+                {
+                    player.EquipItem(worn, false);
+                }
+                finally
+                {
+                    Plugin.InstantLanternEquip = false;
+                }
+            }
+            else
+            {
+                player.SetupEquipment();
+            }
+        }
+
+        static bool UseCustomType(ref ItemDrop.ItemData.ItemType __result)
+        {
+            if (WispSlot.TrinketChosen())
+            {
+                return true;
+            }
+
+            __result = (ItemDrop.ItemData.ItemType)CustomType;
+            return false;
+        }
+
+        public static void Coerce(ItemDrop.ItemData item)
+        {
+            if (!_typePatched || item?.m_shared == null || !Lit.IsLantern(item) || WispSlot.TrinketChosen())
+            {
+                return;
+            }
+
+            if (item.m_shared.m_itemType != (ItemDrop.ItemData.ItemType)CustomType)
+            {
+                item.m_shared.m_itemType = (ItemDrop.ItemData.ItemType)CustomType;
+            }
+        }
+    }
+
     [HarmonyPatch(typeof(Humanoid), nameof(Humanoid.EquipItem))]
     internal static class EquipIntoWisp
     {
+        [HarmonyPrefix]
+        [HarmonyPriority(950)]
+        static bool Prefix(Humanoid __instance, ItemDrop.ItemData item)
+        {
+            HipSlot.Coerce(item);
+            return WearWait.AllowEquip(__instance, item);
+        }
+
+        // Hip Lantern's EquipItem postfix sets __result after vanilla fails on
+        // custom type 56. Run last so Move/StartDark see that success; otherwise
+        // H never binds because the hip lantern was never SetHipLantern.
+        [HarmonyPostfix]
+        [HarmonyPriority(Priority.Last)]
         static void Postfix(Humanoid __instance, ItemDrop.ItemData item, bool __result)
         {
             if (!__result || !(__instance is Player player))
@@ -1111,17 +1454,169 @@ namespace Cjayride.LanternTrinket
         }
     }
 
+    [HarmonyPatch(typeof(InventoryGui), nameof(InventoryGui.OnSelectedItem))]
+    internal static class LanternDragWait
+    {
+        [HarmonyPrefix]
+        [HarmonyPriority(1000)]
+        static bool Prefix(InventoryGui __instance, InventoryGrid grid, Vector2i pos)
+        {
+            return WearWait.AllowDrag(__instance, grid, pos);
+        }
+    }
+
+    [HarmonyPatch(typeof(InventoryGrid), nameof(InventoryGrid.DropItem))]
+    internal static class LanternGridDrop
+    {
+        [HarmonyPrefix]
+        [HarmonyPriority(1000)]
+        static bool Prefix(InventoryGrid __instance, ItemDrop.ItemData item, Vector2i pos)
+        {
+            return WearWait.AllowDrop(__instance, item, pos);
+        }
+    }
+
+    [HarmonyPatch(typeof(Player), "UpdateActionQueue")]
+    internal static class LanternQueueTick
+    {
+        static void Prefix()
+        {
+            WearWait.QueueStart();
+        }
+
+        static void Postfix()
+        {
+            WearWait.QueueEnd();
+        }
+    }
+
+    // SeneaL key cells are a pouch, so a drag-drop skips the wear timer.
+    // Harmony PatchAll only applies types marked [HarmonyPatch]; the wait
+    // helpers live here and the patch types above call them.
+    internal static class WearWait
+    {
+        static MethodInfo _queueEquip;
+        static bool _queueTick;
+        static readonly object[] _one = new object[1];
+
+        public static void QueueStart()
+        {
+            _queueTick = true;
+        }
+
+        public static void QueueEnd()
+        {
+            _queueTick = false;
+        }
+
+        public static bool AllowDrag(InventoryGui gui, InventoryGrid grid, Vector2i pos)
+        {
+            if (gui == null || gui.m_dragGo == null)
+            {
+                return true;
+            }
+
+            return AllowOnto(gui, grid, gui.m_dragItem, pos);
+        }
+
+        public static bool AllowDrop(InventoryGrid grid, ItemDrop.ItemData item, Vector2i pos)
+        {
+            return AllowOnto(InventoryGui.instance, grid, item, pos);
+        }
+
+        public static bool AllowEquip(Humanoid humanoid, ItemDrop.ItemData item)
+        {
+            if (Plugin.InstantLanternEquip || _queueTick)
+            {
+                return true;
+            }
+
+            if (!(humanoid is Player player) || player != Player.m_localPlayer)
+            {
+                return true;
+            }
+
+            if (!ShouldWait(item) || player.IsItemEquiped(item))
+            {
+                return true;
+            }
+
+            if (!InventoryGui.IsVisible())
+            {
+                return true;
+            }
+
+            QueueWear(player, item);
+            return false;
+        }
+
+        static bool AllowOnto(InventoryGui gui, InventoryGrid grid, ItemDrop.ItemData item, Vector2i pos)
+        {
+            if (!ShouldWait(item))
+            {
+                return true;
+            }
+
+            Player player = Player.m_localPlayer;
+            Inventory inventory = player == null ? null : player.GetInventory();
+            if (player == null || grid == null || inventory == null || grid.GetInventory() != inventory)
+            {
+                return true;
+            }
+
+            if (!WispSlot.DropWaits(inventory, pos.x, pos.y))
+            {
+                return true;
+            }
+
+            QueueWear(player, item);
+            gui?.SetupDragItem(null, null, 1);
+            return false;
+        }
+
+        static bool ShouldWait(ItemDrop.ItemData item)
+        {
+            return item?.m_shared != null
+                && Lit.IsLantern(item)
+                && !item.m_equipped
+                && item.m_shared.m_equipDuration > 0f;
+        }
+
+        static void QueueWear(Player player, ItemDrop.ItemData item)
+        {
+            if (_queueEquip == null)
+            {
+                _queueEquip = AccessTools.Method(typeof(Player), "QueueEquipAction");
+            }
+
+            try
+            {
+                _one[0] = item;
+                _queueEquip?.Invoke(player, _one);
+            }
+            catch (Exception)
+            {
+            }
+            finally
+            {
+                _one[0] = null;
+            }
+        }
+    }
+
     [HarmonyPatch(typeof(Humanoid), nameof(Humanoid.UnequipItem))]
     internal static class UnequipLantern
     {
+        [HarmonyPriority(Priority.Last)]
         static void Postfix(Humanoid __instance, ItemDrop.ItemData item)
         {
-            if (!(__instance is Player) || !Lit.IsLantern(item))
+            if (!(__instance is Player player) || !Lit.IsLantern(item))
             {
                 return;
             }
 
             Plugin.HideLanternMagic = false;
+            WispSlot.OnUnequip(player, item);
         }
     }
 

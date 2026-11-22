@@ -1,3 +1,10 @@
+# 1.1.5
+
+- Hip lantern default SeneaL cell is **Key** (Charm stays for Wishbone + Wisplight).
+- Fixes Hip Lantern **Slot type** 24 (vanilla Trinket) stealing the necklace and breaking **H** toggle: forced custom hip type `56`, inventory rewrite, equip hook order with Hip Lantern.
+- Unequipping moves the lantern out of the key cell into the main bag.
+- Dragging onto a key cell uses the same equip countdown as right-click (not instant pouch drop).
+
 # 1.1.4
 
 - Hip lantern sits in a SeneaL **key** cell by default (still equipped on the hip). Charm is free for Wishbone + Wisplight.
