@@ -1,4 +1,4 @@
-# 1.1.5 — lantern on Key cell
+# 1.1.4 — lantern on Key cell
 
 Goal: Hip lantern in a SeneaL key slot (still equipped). Wishbone back on Charm with Wisplight.
 

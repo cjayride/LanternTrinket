@@ -1,10 +1,6 @@
-# 1.1.5
-
-- Hip lantern sits in a SeneaL **key** cell by default (still equipped on the hip). Charm is free for Wishbone + Wisplight. Dropped exclusive-utility unequip.
-
 # 1.1.4
 
-- The hip lantern and other utility items (Wisplight, Wishbone) can no longer stay equipped at the same time. Equipping one unequips the other. Hip Lantern's utility-slot setting stays off so the lantern model remains on the hip.
+- Hip lantern sits in a SeneaL **key** cell by default (still equipped on the hip). Charm is free for Wishbone + Wisplight.
 
 # 1.1.3
 
