@@ -1,3 +1,11 @@
+# 1.1.5
+
+- Hip lantern sits in a SeneaL **key** cell by default (still equipped on the hip). Charm is free for Wishbone + Wisplight. Dropped exclusive-utility unequip.
+
+# 1.1.4
+
+- The hip lantern and other utility items (Wisplight, Wishbone) can no longer stay equipped at the same time. Equipping one unequips the other. Hip Lantern's utility-slot setting stays off so the lantern model remains on the hip.
+
 # 1.1.3
 
 - Fixed: logging in could put items in the wrong equipment slots (a potion in the head slot, a backpack in the charm slot) and leave items on the ground. The mod wrote inventory grid positions by hand, and SeneaL UI draws the equipment doll, the food, action, key, wallet and quiver rows as cells of that same grid.

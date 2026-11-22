@@ -15,7 +15,7 @@ namespace Cjayride.LanternTrinket
     {
         public const string PluginGuid = "cjayride.LanternTrinket";
         public const string PluginName = "Lantern Trinket";
-        public const string PluginVersion = "1.1.3";
+        public const string PluginVersion = "1.1.5";
 
         public static ConfigEntry<bool> EnchantsOnlyWhileLit;
         public static ConfigEntry<string> SeneaLSlot;
@@ -42,10 +42,10 @@ namespace Cjayride.LanternTrinket
         {
             EnchantsOnlyWhileLit = Config.Bind("General", "EnchantsOnlyWhileLit", true,
                 "EpicLoot effects on the hip lantern count only while its light is on.");
-            SeneaLSlot = Config.Bind("General", "SeneaL slot", "Charm",
+            SeneaLSlot = Config.Bind("General", "Lantern cell", "Key",
                 new ConfigDescription(
-                    "SeneaL UI equipment slot the hip lantern equips into. Charm is the wisplight and wishbone cell.",
-                    new AcceptableValueList<string>("Charm", "Belt", "Trinket", "Head", "Cape", "Chest", "Legs")));
+                    "Where the hip lantern sits in SeneaL UI. Key is a dungeon-key cell (wishbone and wisplight stay on Charm). Charm is the wisplight/wishbone cell.",
+                    new AcceptableValueList<string>("Key", "Charm", "Belt", "Trinket", "Head", "Cape", "Chest", "Legs")));
             _harmony = new Harmony(PluginGuid);
             Log = Logger;
             _harmony.PatchAll();
@@ -131,13 +131,15 @@ namespace Cjayride.LanternTrinket
 
             MethodInfo isCharm = Mods.Method("SeneaLUI.Inv.Slots", "IsCharm");
             MethodInfo slotFor = Mods.Method("SeneaLUI.Inv.Slots", "SlotFor");
-            if (isCharm == null || slotFor == null)
+            MethodInfo isKey = Mods.Method("SeneaLUI.Inv.Slots", "IsKey");
+            if (isCharm == null || slotFor == null || isKey == null)
             {
                 return;
             }
 
             _harmony.Patch(isCharm, postfix: new HarmonyMethod(typeof(CountLanternAsCharm), nameof(CountLanternAsCharm.Postfix)));
             _harmony.Patch(slotFor, postfix: new HarmonyMethod(typeof(CountLanternAsCharm), nameof(CountLanternAsCharm.Slot)));
+            _harmony.Patch(isKey, postfix: new HarmonyMethod(typeof(CountLanternAsCharm), nameof(CountLanternAsCharm.AsKey)));
             _wispPatched = true;
             Player player = Player.m_localPlayer;
             ItemDrop.ItemData lantern = player == null ? null : Lit.EquippedLantern(player);
@@ -368,6 +370,10 @@ namespace Cjayride.LanternTrinket
         static MethodInfo _isEquipCell;
         static MethodInfo _eqRow;
         static MethodInfo _slotFor;
+        static MethodInfo _isKeyCell;
+        static MethodInfo _freeKey;
+        static MethodInfo _pouchChanged;
+        static PropertyInfo _keysOn;
         static readonly object[] _one = new object[1];
         static readonly object[] _two = new object[2];
         static readonly object[] _three = new object[3];
@@ -415,7 +421,13 @@ namespace Cjayride.LanternTrinket
                 {
                     player.EquipItem(item, false);
                 }
+
             }
+        }
+
+        public static bool KeyChosen()
+        {
+            return string.Equals(ChosenName(), "Key", StringComparison.OrdinalIgnoreCase);
         }
 
         public static void Move(Player player, ItemDrop.ItemData item)
@@ -427,7 +439,7 @@ namespace Cjayride.LanternTrinket
 
             Lookup();
             Inventory inventory = player.GetInventory();
-            if (inventory == null || _relocate == null)
+            if (inventory == null)
             {
                 return;
             }
@@ -456,6 +468,18 @@ namespace Cjayride.LanternTrinket
                 return;
             }
 
+            if (KeyChosen())
+            {
+                PlaceInKey(inventory, item);
+                Repair(inventory);
+                return;
+            }
+
+            if (_relocate == null)
+            {
+                return;
+            }
+
             int slot = SlotId();
             if (!SlotShown(slot))
             {
@@ -479,6 +503,99 @@ namespace Cjayride.LanternTrinket
             }
 
             Repair(inventory);
+        }
+
+        static void PlaceInKey(Inventory inventory, ItemDrop.ItemData item)
+        {
+            if (_isKeyCell == null || _freeKey == null)
+            {
+                return;
+            }
+
+            if (InKeyCell(inventory, item))
+            {
+                return;
+            }
+
+            if (!KeysOn())
+            {
+                WarnSlotOff(-1);
+                return;
+            }
+
+            object cell;
+            try
+            {
+                _one[0] = inventory;
+                cell = _freeKey.Invoke(null, _one);
+            }
+            catch (Exception)
+            {
+                return;
+            }
+            finally
+            {
+                _one[0] = null;
+            }
+
+            if (!(cell is Vector2i pos) || pos.x < 0)
+            {
+                WarnSlotOff(-1);
+                return;
+            }
+
+            item.m_gridPos = pos;
+            if (_pouchChanged != null)
+            {
+                try
+                {
+                    _one[0] = inventory;
+                    _pouchChanged.Invoke(null, _one);
+                }
+                catch (Exception)
+                {
+                }
+                finally
+                {
+                    _one[0] = null;
+                }
+            }
+        }
+
+        static bool InKeyCell(Inventory inventory, ItemDrop.ItemData item)
+        {
+            try
+            {
+                _three[0] = inventory;
+                _three[1] = item.m_gridPos.x;
+                _three[2] = item.m_gridPos.y;
+                return (bool)_isKeyCell.Invoke(null, _three);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+            finally
+            {
+                _three[0] = null;
+            }
+        }
+
+        static bool KeysOn()
+        {
+            if (_keysOn == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                return (bool)_keysOn.GetValue(null, null);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
         }
 
         public static void RepairNow()
@@ -816,9 +933,8 @@ namespace Cjayride.LanternTrinket
             }
 
             _warnedOff = true;
-            Plugin.Log.LogWarning("The SeneaL " + ChosenName() + " slot is switched off in the SeneaL UI config, "
-                + "so the hip lantern stays in the normal inventory rows. Pick a slot SeneaL shows, "
-                + "or enable that slot in the SeneaL UI config.");
+            Plugin.Log.LogWarning("The SeneaL " + ChosenName() + " slot is not available (KeySlotCount 0, or both key cells full), "
+                + "so the hip lantern stays in the normal inventory rows.");
         }
 
         static bool SeneaReady(Inventory inventory)
@@ -859,8 +975,8 @@ namespace Cjayride.LanternTrinket
 
         static string ChosenName()
         {
-            string name = Plugin.SeneaLSlot != null ? Plugin.SeneaLSlot.Value : "Charm";
-            return string.IsNullOrEmpty(name) ? "Charm" : name;
+            string name = Plugin.SeneaLSlot != null ? Plugin.SeneaLSlot.Value : "Key";
+            return string.IsNullOrEmpty(name) ? "Key" : name;
         }
 
         public static int SlotId()
@@ -947,6 +1063,18 @@ namespace Cjayride.LanternTrinket
                 _isEquipCell = AccessTools.Method(slots, "IsEquipCell");
                 _eqRow = AccessTools.Method(slots, "EqRow");
                 _slotFor = AccessTools.Method(slots, "SlotFor");
+                _isKeyCell = AccessTools.Method(slots, "IsKeyCell");
+                _keysOn = AccessTools.Property(slots, "KeysOn");
+            }
+
+            if (_freeKey == null)
+            {
+                Type pouch = Mods.Type("SeneaLUI.Inv.Pouch");
+                if (pouch != null)
+                {
+                    _freeKey = AccessTools.Method(pouch, "FreeKey", new[] { typeof(Inventory) });
+                    _pouchChanged = AccessTools.Method(pouch, "Changed", new[] { typeof(Inventory) });
+                }
             }
 
             if (_useUtility != null && _apply != null && _slotCell != null)
@@ -1040,12 +1168,28 @@ namespace Cjayride.LanternTrinket
             }
         }
 
+        public static void AsKey(ItemDrop.ItemData item, ref bool __result)
+        {
+            if (WispSlot.KeyChosen() && Lit.IsLantern(item))
+            {
+                __result = true;
+            }
+        }
+
         public static void Slot(ItemDrop.ItemData item, ref int __result)
         {
-            if (Lit.IsLantern(item))
+            if (!Lit.IsLantern(item))
             {
-                __result = WispSlot.SlotId();
+                return;
             }
+
+            if (WispSlot.KeyChosen())
+            {
+                __result = -1;
+                return;
+            }
+
+            __result = WispSlot.SlotId();
         }
     }
 

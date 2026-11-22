@@ -1,6 +1,6 @@
 {
   "name": "LanternTrinket",
-  "version_number": "1.1.3",
+  "version_number": "1.1.5",
   "website_url": "https://github.com/cjayride/LanternTrinket",
   "description": "Hip Lantern enchants count only while the light is on. The lantern equips in the SeneaL Charm slot.",
   "dependencies": [
